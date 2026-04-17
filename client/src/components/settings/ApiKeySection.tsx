@@ -32,7 +32,16 @@ export function ApiKeySection() {
       <div>
         <h2 className="text-base font-semibold text-foreground font-heading">API Key</h2>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Your OpenRouter API key is encrypted at rest and never exposed after saving.
+          Your{' '}
+          <a
+            href="https://openrouter.ai/keys"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-foreground underline underline-offset-2 hover:opacity-70 transition-opacity"
+          >
+            OpenRouter
+          </a>{' '}
+          API key is encrypted at rest and never exposed after saving.
         </p>
       </div>
 
@@ -75,7 +84,16 @@ function AddKeyView() {
       <div className="flex items-center gap-3 p-3 rounded-xl bg-amber-500/8 border border-amber-500/20">
         <KeyRound className="w-4 h-4 text-amber-500 shrink-0" />
         <p className="text-sm text-amber-600 dark:text-amber-400">
-          Add your OpenRouter API key to unlock AI-powered job analysis.
+          Add your{' '}
+          <a
+            href="https://openrouter.ai/keys"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-2 hover:opacity-70 transition-opacity"
+          >
+            OpenRouter
+          </a>{' '}
+          API key to unlock AI-powered job analysis.
         </p>
       </div>
 

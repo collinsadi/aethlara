@@ -1,4 +1,3 @@
-import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Plus,
@@ -17,10 +16,16 @@ import { useAuth } from "@/hooks/useAuth";
 
 interface TopbarProps {
   onMobileMenuToggle: () => void;
+  onNewJob: () => void;
 }
 
-export function Topbar({ onMobileMenuToggle }: TopbarProps) {
+export function Topbar({ onMobileMenuToggle, onNewJob }: TopbarProps) {
   const { user, logout } = useAuth();
+  const userInitials = user?.full_name
+    ?.split(" ")
+    .filter(Boolean)
+    .map((n) => n[0])
+    .join("") || "U";
 
   return (
     <motion.header
@@ -40,31 +45,24 @@ export function Topbar({ onMobileMenuToggle }: TopbarProps) {
       </div>
 
       <div className="flex items-center gap-3">
-        <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-          <Link
-            to="/jobs?create=true"
-            className="btn-tf animate-btn-shine inline-flex items-center gap-2 text-sm font-semibold px-4 py-2 min-h-0"
-          >
-            <Plus className="w-4 h-4" />
-            <span className="hidden sm:inline">New Job</span>
-          </Link>
-        </motion.div>
+        <motion.button
+          type="button"
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          onClick={onNewJob}
+          className="btn-tf animate-btn-shine inline-flex items-center gap-2 text-sm font-semibold px-4 py-2 min-h-0"
+        >
+          <Plus className="w-4 h-4" />
+          <span className="hidden sm:inline">New Job</span>
+        </motion.button>
 
         <DropdownMenu>
-          <DropdownMenuTrigger>
-            <button
-              type="button"
-              className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-muted transition-colors"
-            >
-              <Avatar className="w-8 h-8 border border-border">
-                <AvatarFallback className="bg-muted text-foreground text-xs font-semibold font-heading">
-                  {user?.full_name
-                    .split(" ")
-                    .map((n) => n[0])
-                    .join("") ?? "U"}
-                </AvatarFallback>
-              </Avatar>
-            </button>
+          <DropdownMenuTrigger className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-muted transition-colors">
+            <Avatar className="w-8 h-8 border border-border">
+              <AvatarFallback className="bg-muted text-foreground text-xs font-semibold font-heading">
+                {userInitials}
+              </AvatarFallback>
+            </Avatar>
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="end"

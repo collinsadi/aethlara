@@ -34,17 +34,6 @@ export function Jobs() {
   const sort = (searchParams.get('sort') as 'recent' | 'best_match') || 'recent'
   const status = searchParams.get('status') ?? ''
   const search = searchParams.get('search') ?? ''
-  const createRequested = searchParams.get('create') === 'true'
-
-  useEffect(() => {
-    if (!createRequested) return
-    setCreateOpen(true)
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev)
-      next.delete('create')
-      return next
-    }, { replace: true })
-  }, [createRequested, setSearchParams])
 
   const { data, isLoading, isError } = useJobs({
     page,

@@ -12,6 +12,7 @@ import {
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { AnimatedOrbs } from "@/components/AnimatedOrbs";
+import { CreateJobModal } from "@/components/jobs/CreateJobModal";
 
 const mobileNavItems = [
   { icon: LayoutDashboard, label: "Dashboard", href: "/dashboard" },
@@ -24,6 +25,7 @@ const mobileNavItems = [
 export function AppLayout() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [createJobOpen, setCreateJobOpen] = useState(false);
   const location = useLocation();
 
   return (
@@ -101,7 +103,10 @@ export function AppLayout() {
         </AnimatePresence>
 
         <div className="flex-1 flex flex-col min-h-screen">
-          <Topbar onMobileMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)} />
+          <Topbar
+            onMobileMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)}
+            onNewJob={() => setCreateJobOpen(true)}
+          />
 
           <main className="flex-1 p-4 md:p-6 lg:p-8">
             <AnimatePresence mode="wait">
@@ -118,6 +123,8 @@ export function AppLayout() {
           </main>
         </div>
       </div>
+
+      <CreateJobModal open={createJobOpen} onClose={() => setCreateJobOpen(false)} />
     </div>
   );
 }
