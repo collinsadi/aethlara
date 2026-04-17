@@ -69,7 +69,7 @@ export function MatchScoreChart({ data }: Props) {
               borderRadius: 10,
               fontSize: 12,
             }}
-            formatter={(v: number) => [v, 'Jobs']}
+            formatter={(value) => [Number(value ?? 0), 'Jobs']}
           />
           <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={56}>
             {chartData.map((d) => (

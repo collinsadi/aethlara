@@ -34,12 +34,12 @@ const INTERNAL_FIELDS = [
   'raw_input_ref',
 ] as const
 
-function stripInternal<T extends Record<string, unknown>>(obj: T): T {
-  const out = { ...obj }
+function stripInternal<T extends object>(obj: T): T {
+  const out: Record<string, unknown> = { ...(obj as Record<string, unknown>) }
   for (const field of INTERNAL_FIELDS) {
-    delete out[field as keyof T]
+    delete out[field]
   }
-  return out
+  return out as T
 }
 
 export interface CreateJobPayload {
@@ -72,14 +72,14 @@ export async function getJobsApi(filters: JobFilters = {}): Promise<PaginatedJob
   const res = await apiClient.get<ApiSuccessResponse<PaginatedJobs>>('/jobs', { params })
   const data = res.data.data!
   return {
-    items: (data.items ?? []).map((j) => stripInternal(j as Record<string, unknown>) as ApiJob),
+    items: (data.items ?? []).map((j) => stripInternal(j)),
     pagination: data.pagination,
   }
 }
 
 export async function getJobDetailApi(id: string): Promise<ApiJobDetail> {
   const res = await apiClient.get<ApiSuccessResponse<ApiJobDetail>>(`/jobs/${id}`)
-  return stripInternal(res.data.data! as Record<string, unknown>) as ApiJobDetail
+  return stripInternal(res.data.data!)
 }
 
 export async function updateJobStatusApi(

@@ -274,11 +274,6 @@ export function CreateJobModal({ open, onClose, onSuccess }: Props) {
                   if (createdJob) onSuccess?.(createdJob)
                   handleClose()
                 }}
-                onSwitchToText={() => {
-                  reset()
-                  setInputMethod('text')
-                  setStep('provide_job')
-                }}
                 onRetryWithText={() => {
                   reset()
                   setInputMethod('text')
@@ -651,7 +646,6 @@ function StepResult({
   inputMethod,
   onAddAnother,
   onViewJob,
-  onSwitchToText,
   onRetryWithText,
 }: {
   job: ApiJob | null
@@ -659,7 +653,6 @@ function StepResult({
   inputMethod: 'url' | 'text'
   onAddAnother: () => void
   onViewJob: () => void
-  onSwitchToText: () => void
   onRetryWithText: () => void
 }) {
   if (error) {

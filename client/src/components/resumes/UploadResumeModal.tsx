@@ -12,7 +12,7 @@ import {
   RefreshCw,
   Sparkles,
 } from "lucide-react";
-import { useFileUpload, type UploadStep } from "@/hooks/useFileUpload";
+import { useFileUpload } from "@/hooks/useFileUpload";
 import { ALLOWED_EXTENSIONS, MAX_FILE_SIZE_BYTES, formatFileSize } from "@/lib/validators/resume.schema";
 
 interface UploadResumeModalProps {

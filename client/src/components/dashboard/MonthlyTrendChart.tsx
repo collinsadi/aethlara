@@ -56,8 +56,8 @@ export function MonthlyTrendChart({ data }: Props) {
               borderRadius: 10,
               fontSize: 12,
             }}
-            formatter={(v: number) => [v, 'Jobs']}
-            labelFormatter={formatMonth}
+            formatter={(value) => [Number(value ?? 0), 'Jobs']}
+            labelFormatter={(label) => formatMonth(String(label))}
           />
           <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={40}>
             {sorted.map((entry) => (

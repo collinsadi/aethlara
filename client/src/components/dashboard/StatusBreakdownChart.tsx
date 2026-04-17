@@ -46,8 +46,15 @@ export function StatusBreakdownChart({ data, totalActive }: Props) {
     )
   }
 
-  const handleClick = (entry: { status: string }) => {
-    navigate(`/jobs?status=${entry.status}`)
+  const handleClick = (status: string) => {
+    navigate(`/jobs?status=${status}`)
+  }
+
+  const handleSliceClick = (entry: { payload?: { status?: string } }) => {
+    const status = entry.payload?.status
+    if (status) {
+      handleClick(status)
+    }
   }
 
   return (
@@ -64,7 +71,7 @@ export function StatusBreakdownChart({ data, totalActive }: Props) {
               innerRadius={50}
               outerRadius={80}
               paddingAngle={2}
-              onClick={handleClick}
+              onClick={handleSliceClick}
               style={{ cursor: 'pointer' }}
             >
               {chartData.map((entry) => (
@@ -81,9 +88,9 @@ export function StatusBreakdownChart({ data, totalActive }: Props) {
                 borderRadius: 10,
                 fontSize: 12,
               }}
-              formatter={(v: number, name: string) => [
-                v,
-                STATUS_LABELS[name] ?? name,
+              formatter={(value, name) => [
+                Number(value ?? 0),
+                STATUS_LABELS[String(name)] ?? String(name),
               ]}
             />
           </PieChart>
@@ -104,7 +111,7 @@ export function StatusBreakdownChart({ data, totalActive }: Props) {
           <button
             key={d.status}
             type="button"
-            onClick={() => handleClick(d)}
+            onClick={() => handleClick(d.status)}
             className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
             aria-label={`Filter by ${STATUS_LABELS[d.status]}`}
           >

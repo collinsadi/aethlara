@@ -56,7 +56,7 @@ export function TopCompaniesChart({ data }: Props) {
             type="category"
             dataKey="company"
             width={90}
-            tickFormatter={(v) => truncate(v)}
+            tickFormatter={(value) => truncate(String(value))}
             tick={{ fontSize: 11, fill: 'var(--color-foreground)' }}
             axisLine={false}
             tickLine={false}
@@ -69,7 +69,7 @@ export function TopCompaniesChart({ data }: Props) {
               borderRadius: 10,
               fontSize: 12,
             }}
-            formatter={(v: number) => [v, 'Jobs']}
+            formatter={(value) => [Number(value ?? 0), 'Jobs']}
           />
           <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={20}>
             {sorted.map((d) => (

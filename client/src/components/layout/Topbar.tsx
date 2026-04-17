@@ -61,7 +61,7 @@ export function Topbar({ onMobileMenuToggle }: TopbarProps) {
         </motion.div>
 
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>
+          <DropdownMenuTrigger>
             <button
               type="button"
               className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-muted transition-colors"
