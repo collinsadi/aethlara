@@ -12,6 +12,9 @@
  *   - job created     → invalidate jobs.lists() + analytics.dashboard()
  *   - job status update → invalidate jobs.detail(id) + jobs.lists() + analytics.dashboard()
  *   - job deleted     → invalidate jobs.lists() + analytics.dashboard(), remove jobs.detail(id)
+ *   - chat session created → invalidate chat.sessions()
+ *   - chat message sent    → append to chat.messages(sessionId) infinite cache; do NOT refetch
+ *   - chat session deleted → invalidate chat.sessions(); remove chat.messages(sessionId)
  *   - logout          → queryClient.clear()
  */
 
@@ -46,5 +49,11 @@ export const queryKeys = {
   user: {
     all: () => ['user'] as const,
     me:  () => [...queryKeys.user.all(), 'me'] as const,
+  },
+  chat: {
+    all:      () => ['chat'] as const,
+    sessions: () => [...queryKeys.chat.all(), 'sessions'] as const,
+    session:  (sessionId: string) => [...queryKeys.chat.sessions(), sessionId] as const,
+    messages: (sessionId: string) => [...queryKeys.chat.session(sessionId), 'messages'] as const,
   },
 } as const

@@ -67,6 +67,10 @@ export type ApplicationStatus =
   | "offer"
   | "rejected";
 
+/**
+ * Legacy in-memory chat types used by mocks and prototype components. Will be
+ * removed once ChatBubble/ChatInterface migrate to the real API-backed chat.
+ */
 export interface ChatMessage {
   id: string;
   jobId: string;
@@ -78,6 +82,45 @@ export interface ChatMessage {
 export interface ChatHistory {
   jobId: string;
   messages: ChatMessage[];
+}
+
+// ─── Chat (API-backed) ──────────────────────────────────────────────────────
+
+export type ChatRole = 'user' | 'assistant'
+
+export interface ChatSessionSummary {
+  id: string
+  job_id: string
+  job_title: string
+  company: string
+  match_score: number | null
+  message_count: number
+  last_message_at: string | null
+  created_at: string
+}
+
+export interface ChatMessageMetadata {
+  tokens_used?: number
+  tokens_in?: number
+  tokens_out?: number
+  finish_reason?: string
+  latency_ms?: number
+}
+
+export interface ApiChatMessage {
+  id: string
+  role: ChatRole
+  content: string
+  model_used?: string
+  is_error?: boolean
+  metadata?: ChatMessageMetadata
+  created_at: string
+}
+
+export interface ChatMessagesPage {
+  messages: ApiChatMessage[]
+  has_more: boolean
+  oldest_message_id?: string
 }
 
 export const APPLICATION_STATUS_LABELS: Record<ApplicationStatus, string> = {
