@@ -17,6 +17,7 @@ import (
 	"github.com/collinsadi/aethlara/internal/analytics"
 	"github.com/collinsadi/aethlara/internal/apikey"
 	"github.com/collinsadi/aethlara/internal/auth"
+	"github.com/collinsadi/aethlara/internal/chat"
 	"github.com/collinsadi/aethlara/internal/config"
 	"github.com/collinsadi/aethlara/internal/database"
 	"github.com/collinsadi/aethlara/internal/email"
@@ -74,7 +75,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	aiClient := ai.NewClient(cfg.OpenRouterAPIKey, cfg.OpenRouterBaseURL, cfg.OpenRouterModel)
+	// NOTE: ai.NewClient intentionally takes no fallback API key. Every request
+	// resolves a per-user key via the APIKeyProvider wired below.
+	aiClient := ai.NewClient(cfg.OpenRouterBaseURL, cfg.OpenRouterModel)
 
 	apiKeySvc, err := apikey.New(cfg.APIKeyEncryptionKey(), cfg.APIKeyPreviewLength)
 	if err != nil {
@@ -89,6 +92,7 @@ func main() {
 	jobRepo := job.NewRepository(db.Pool)
 	analyticsRepo := analytics.NewRepository(db.Pool)
 	settingsRepo := settings.NewRepository(db.Pool)
+	chatRepo := chat.NewRepository(db.Pool)
 
 	// Services
 	authSvc := auth.NewService(authRepo, userRepo, emailClient, cfg)
@@ -97,6 +101,7 @@ func main() {
 	jobSvc := job.NewService(jobRepo, r2Client, aiClient, cfg)
 	analyticsSvc := analytics.NewService(analyticsRepo)
 	settingsSvc := settings.NewService(settingsRepo, userRepo, apiKeySvc, aiClient, emailClient, cfg)
+	chatSvc := chat.NewService(chatRepo, aiClient, cfg)
 
 	// Wire per-user key provider into the AI client after settings service is ready.
 	aiClient.SetKeyProvider(settingsSvc)
@@ -108,6 +113,7 @@ func main() {
 	jobHandler := job.NewHandler(jobSvc, cfg)
 	analyticsHandler := analytics.NewHandler(analyticsSvc)
 	settingsHandler := settings.NewHandler(settingsSvc)
+	chatHandler := chat.NewHandler(chatSvc)
 
 	// Router
 	r := chi.NewRouter()
@@ -126,13 +132,16 @@ func main() {
 
 	r.Get("/health", healthHandler(db, cfg))
 
+	aiGate := middleware.AIGate(settingsRepo)
+
 	r.Route("/api/v1", func(r chi.Router) {
 		auth.RegisterRoutes(r, authHandler, cfg)
 		user.RegisterRoutes(r, userHandler, cfg)
-		resume.RegisterRoutes(r, resumeHandler, cfg)
-		job.RegisterRoutes(r, jobHandler, cfg, middleware.AIGate(settingsRepo))
+		resume.RegisterRoutes(r, resumeHandler, cfg, aiGate)
+		job.RegisterRoutes(r, jobHandler, cfg, aiGate)
 		analytics.RegisterRoutes(r, analyticsHandler, cfg)
 		settings.RegisterRoutes(r, settingsHandler, cfg)
+		chat.RegisterRoutes(r, chatHandler, cfg, aiGate)
 	})
 
 	srv := &http.Server{
