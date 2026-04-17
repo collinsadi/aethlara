@@ -1,0 +1,21 @@
+[build]
+  cmd        = "go build -o tmp/main ./cmd/api"
+  bin        = "tmp/main"
+  delay      = 500
+  include_ext = ["go"]
+  exclude_dir = ["tmp", "vendor", "testdata"]
+  kill_delay  = "500ms"
+  rerun       = false
+  send_interrupt = true
+
+[log]
+  time = false
+
+[color]
+  main    = "magenta"
+  watcher = "cyan"
+  build   = "yellow"
+  runner  = "green"
+
+[misc]
+  clean_on_exit = true
