@@ -495,3 +495,225 @@ curl https://api.example.com/health
 - All queries use parameterised statements — zero string interpolation
 - DB connection uses `sslmode=require` in production (set in `DATABASE_URL`)
 - Sensitive columns (`code_hash`, `token_hash`) are never returned in API responses
+
+---
+
+## AI / OpenRouter Architecture (Non-Negotiable)
+
+This platform holds **no platform-level OpenRouter API key**. Every AI call —
+resume extraction, job extraction, resume alignment, tailored-PDF context, and
+job chat — resolves the authenticated user's own encrypted key per request.
+
+**Guarantees:**
+- `OPENROUTER_API_KEY` is NOT a valid environment variable. There is no fallback.
+- Decrypted keys live only inside a single request's stack frame and are zeroed
+  before the function returns.
+- Every AI-dependent endpoint is gated by the `AIGate` middleware which checks
+  `settings.HasValidAPIKey(userID)` before the handler runs.
+- Service-level code also validates the key (defence-in-depth) and returns
+  `ai.ErrNoAPIKey` if none is available, which handlers map to `403
+  API_KEY_REQUIRED`.
+
+**403 shape used for missing / invalid keys:**
+```json
+{
+  "error": {
+    "code": "API_KEY_REQUIRED",
+    "message": "An OpenRouter API key is required to use this feature. Add your key in Settings.",
+    "action": { "label": "Add API Key", "path": "/settings#api-key" }
+  }
+}
+```
+
+Endpoints protected by the AI gate:
+- `POST /resumes/upload`
+- `POST /jobs`
+- `POST /chat/sessions`
+- `POST /chat/sessions/:session_id/messages`
+
+---
+
+## Job Chat
+
+A per-job chat interface for discussing the user's application strategy,
+alignment gaps, interview prep, and cover letter drafting — scoped strictly to
+one job. Chat history is persistent and assembled with rich context
+(`extracted_job_json`, `tailored_resume_json`, resume data) on every turn.
+
+Prompt version: `job_chat_v1.0.0` (logged on every assistant message).
+
+### Security notes
+- Resume PII (email, phone, full name) is stripped server-side before the
+  prompt is assembled.
+- Raw `extracted_job_json` and `tailored_resume_json` blobs are NEVER embedded
+  in the prompt — only structured summaries.
+- Scope-guarding rules in the system prompt instruct the model to refuse
+  off-topic questions.
+- All endpoints are authenticated; the AI-triggering ones also pass through
+  the AI gate (see above).
+
+### POST /chat/sessions
+
+**Purpose:** Create a new chat session for a job, or return the existing one.
+
+**Authentication:** Required. **AI gate:** Required.
+
+**Rate limit:** 20/user per minute (burst 20).
+
+**Request body:**
+```json
+{ "job_id": "<uuid>" }
+```
+
+**Success `201 Created`** (new session) **or `200 OK`** (existing session):
+```json
+{
+  "data": {
+    "id": "<uuid>",
+    "job_id": "<uuid>",
+    "job_title": "Senior Backend Engineer",
+    "company": "Acme Co.",
+    "match_score": 82,
+    "message_count": 0,
+    "last_message_at": null,
+    "created_at": "2025-05-01T12:34:56Z"
+  }
+}
+```
+
+**Errors:**
+| Code | Status |
+|---|---|
+| `INVALID_INPUT` | 400 |
+| `NOT_FOUND` | 404 (job not found) |
+| `JOB_NOT_READY` | 409 (alignment not complete) |
+| `API_KEY_REQUIRED` | 403 |
+
+---
+
+### GET /chat/sessions
+
+**Purpose:** List the user's active chat sessions, newest-activity first.
+
+**Authentication:** Required.
+
+**Success `200 OK`:**
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": "<uuid>",
+        "job_id": "<uuid>",
+        "job_title": "Senior Backend Engineer",
+        "company": "Acme Co.",
+        "match_score": 82,
+        "message_count": 4,
+        "last_message_at": "2025-05-02T09:30:00Z",
+        "created_at": "2025-05-01T12:34:56Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### GET /chat/sessions/:session_id/messages
+
+**Purpose:** Load a page of messages for a session (cursor-based pagination,
+oldest-first within the page, system messages never included).
+
+**Authentication:** Required.
+
+**Query parameters:**
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `before` | uuid | — | Cursor: oldest currently-loaded message id. Omit to load most recent page. |
+| `limit`  | int  | 50    | Max 100. |
+
+**Success `200 OK`:**
+```json
+{
+  "data": {
+    "messages": [
+      {
+        "id": "<uuid>",
+        "role": "user",
+        "content": "What gaps stand out the most?",
+        "created_at": "2025-05-02T09:30:00Z"
+      },
+      {
+        "id": "<uuid>",
+        "role": "assistant",
+        "content": "You're strong on X but missing Y…",
+        "model_used": "anthropic/claude-3.5-sonnet",
+        "metadata": { "tokens_in": 850, "tokens_out": 220, "finish_reason": "stop", "latency_ms": 2100 },
+        "created_at": "2025-05-02T09:30:04Z"
+      }
+    ],
+    "has_more": true,
+    "oldest_message_id": "<uuid>"
+  }
+}
+```
+
+---
+
+### POST /chat/sessions/:session_id/messages
+
+**Purpose:** Send a user message and receive the assistant's reply. The user
+message is persisted BEFORE the AI call so it is never lost on failure.
+
+**Authentication:** Required. **AI gate:** Required.
+
+**Rate limits (per user, ANDed):**
+- 10 messages per minute
+- 30 messages per hour
+
+**Request body:**
+```json
+{ "content": "Draft a 3-paragraph cover letter." }
+```
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `content` | string | Yes | 1–4000 chars after trimming |
+
+**Success `201 Created`:**
+```json
+{
+  "data": {
+    "id": "<uuid>",
+    "role": "assistant",
+    "content": "Dear hiring team…",
+    "model_used": "anthropic/claude-3.5-sonnet",
+    "metadata": { "tokens_in": 950, "tokens_out": 420, "finish_reason": "stop", "latency_ms": 2400 },
+    "created_at": "2025-05-02T09:30:04Z"
+  }
+}
+```
+
+**Errors:**
+| Code | Status |
+|---|---|
+| `INVALID_INPUT` | 400 |
+| `NOT_FOUND` | 404 |
+| `RATE_LIMITED` | 429 |
+| `API_KEY_REQUIRED` | 403 |
+| `AI_UNAVAILABLE` | 502 |
+| `CONTEXT_ASSEMBLY_FAILED` | 500 |
+
+---
+
+### DELETE /chat/sessions/:session_id
+
+**Purpose:** Soft-delete a chat session and its messages. The row remains in
+the DB with `deleted_at` set so analytics can still reason about activity.
+
+**Authentication:** Required.
+
+**Success `200 OK`:**
+```json
+{ "data": { "id": "<uuid>" }, "message": "Chat session deleted." }
+```
