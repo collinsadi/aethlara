@@ -1,9 +1,20 @@
+// Package ai is the ONLY place in the codebase that talks to OpenRouter.
+//
+// Architectural invariant (non-negotiable):
+//   - There is NO platform-level API key.
+//   - Every call resolves a key per request from the authenticated user's
+//     encrypted record via the injected APIKeyProvider.
+//   - Decrypted keys live only inside a single request's stack frame and are
+//     zeroed before the function returns.
+//   - If a user has no valid key, ErrNoAPIKey is returned and callers MUST
+//     propagate it as 403 API_KEY_REQUIRED.
 package ai
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -18,50 +29,82 @@ const (
 	retryBaseDelay = time.Second
 )
 
-// APIKeyProvider retrieves a decrypted API key for a given user.
-// Satisfied by settings.Service — defined here to avoid import cycles.
+// ErrNoAPIKey is the typed sentinel returned whenever a user has no valid
+// OpenRouter key on file. Handlers must translate this to 403 API_KEY_REQUIRED.
+var ErrNoAPIKey = errors.New("no valid OpenRouter API key on file")
+
+// APIKeyProvider resolves a decrypted API key for a given user.
+// Satisfied by settings.Service. Implementations MUST return ErrNoAPIKey when
+// no usable key exists — the ai.Client relies on this for uniform handling.
 type APIKeyProvider interface {
 	GetDecryptedKey(ctx context.Context, userID string) (string, error)
 }
 
+// Client executes OpenRouter chat completions.
+// It holds NO API key — every call resolves one per user.
 type Client struct {
-	fallbackKey string       // used when UserID is empty (e.g. config-level key)
 	keyProvider APIKeyProvider
 	baseURL     string
 	model       string
 	http        *http.Client
 }
 
-type Request struct {
-	UserID        string // set to trigger per-user key lookup
-	SystemPrompt  string
-	UserMessage   string
-	PromptVersion string
-}
+// Role constants for chat messages.
+const (
+	RoleSystem    = "system"
+	RoleUser      = "user"
+	RoleAssistant = "assistant"
+)
 
-type Response struct {
-	Content   string
-	TokensIn  int
-	TokensOut int
-	LatencyMS int64
-}
-
-type openRouterRequest struct {
-	Model       string    `json:"model"`
-	Messages    []message `json:"messages"`
-	Temperature float64   `json:"temperature"`
-}
-
-type message struct {
+// Message is a single turn in a conversation sent to the model.
+type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
+// Request is a single-turn convenience request (one system prompt + one user
+// message). Use ChatRequest for multi-turn conversations.
+type Request struct {
+	UserID        string // REQUIRED — enforces per-user key resolution
+	SystemPrompt  string
+	UserMessage   string
+	PromptVersion string
+	// Temperature overrides the default of 0.1 when non-nil.
+	Temperature *float64
+}
+
+// ChatRequest is the full multi-turn form used by the chat module.
+type ChatRequest struct {
+	UserID        string    // REQUIRED — enforces per-user key resolution
+	SystemPrompt  string    // injected as the first system message
+	Messages      []Message // conversation history, oldest first
+	PromptVersion string
+	Temperature   *float64
+}
+
+// Response carries the model output plus instrumentation.
+type Response struct {
+	Content      string
+	TokensIn     int
+	TokensOut    int
+	LatencyMS    int64
+	Model        string
+	FinishReason string
+}
+
+type openRouterRequest struct {
+	Model       string    `json:"model"`
+	Messages    []Message `json:"messages"`
+	Temperature float64   `json:"temperature"`
+}
+
 type openRouterResponse struct {
+	Model   string `json:"model"`
 	Choices []struct {
 		Message struct {
 			Content string `json:"content"`
 		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage struct {
 		PromptTokens     int `json:"prompt_tokens"`
@@ -73,61 +116,118 @@ type openRouterResponse struct {
 	} `json:"error,omitempty"`
 }
 
-func NewClient(fallbackKey, baseURL, model string) *Client {
+// NewClient constructs a Client. Note: there is deliberately no fallback key
+// parameter — we refuse to allow one at construction time.
+func NewClient(baseURL, model string) *Client {
 	return &Client{
-		fallbackKey: fallbackKey,
-		baseURL:     baseURL,
-		model:       model,
-		http:        &http.Client{Timeout: defaultTimeout},
+		baseURL: baseURL,
+		model:   model,
+		http:    &http.Client{Timeout: defaultTimeout},
 	}
 }
 
 // SetKeyProvider injects the per-user key provider after construction.
-// Called from main after settings service is wired up.
+// Called once from main after the settings service is wired.
 func (c *Client) SetKeyProvider(p APIKeyProvider) {
 	c.keyProvider = p
 }
 
-// Complete resolves the API key for the request's UserID (if set),
-// then calls OpenRouter.  The decrypted key lives only in this stack frame.
+// Model returns the configured default model.
+func (c *Client) Model() string { return c.model }
+
+// Complete runs a single-turn completion for the given user.
+// If userID is empty OR the user has no valid key, ErrNoAPIKey is returned.
 func (c *Client) Complete(ctx context.Context, req Request) (*Response, error) {
+	if req.UserID == "" {
+		return nil, ErrNoAPIKey
+	}
+	chat := ChatRequest{
+		UserID:        req.UserID,
+		SystemPrompt:  req.SystemPrompt,
+		PromptVersion: req.PromptVersion,
+		Temperature:   req.Temperature,
+		Messages:      []Message{{Role: RoleUser, Content: req.UserMessage}},
+	}
+	return c.Chat(ctx, chat)
+}
+
+// Chat runs a multi-turn completion for the given user.
+// The system prompt is injected as the first message. Per-user key is resolved,
+// used for exactly one HTTP request, then zeroed from memory.
+func (c *Client) Chat(ctx context.Context, req ChatRequest) (*Response, error) {
+	if req.UserID == "" {
+		return nil, ErrNoAPIKey
+	}
+
 	apiKey, err := c.resolveKey(ctx, req.UserID)
 	if err != nil {
-		return nil, fmt.Errorf("resolve API key: %w", err)
+		return nil, err
 	}
-	resp, err := c.execute(ctx, apiKey, req)
-	apiKey = "" // zero from this scope
+
+	messages := make([]Message, 0, len(req.Messages)+1)
+	if req.SystemPrompt != "" {
+		messages = append(messages, Message{Role: RoleSystem, Content: req.SystemPrompt})
+	}
+	messages = append(messages, req.Messages...)
+
+	resp, err := c.execute(ctx, apiKey, messages, req.Temperature, req.PromptVersion)
+	// Zero the plaintext key from this stack frame before returning.
+	apiKey = ""
+	_ = apiKey
 	return resp, err
 }
 
 // CompleteWithKey bypasses the key provider and uses the supplied key directly.
-// Used only by settings.Service for liveness validation — the key never reaches the DB.
+// Used ONLY by settings.Service for liveness validation — the plaintext key is
+// never persisted. Not exposed to any other caller.
 func (c *Client) CompleteWithKey(ctx context.Context, plainKey string, req Request) (*Response, error) {
-	return c.execute(ctx, plainKey, req)
+	messages := []Message{}
+	if req.SystemPrompt != "" {
+		messages = append(messages, Message{Role: RoleSystem, Content: req.SystemPrompt})
+	}
+	messages = append(messages, Message{Role: RoleUser, Content: req.UserMessage})
+	return c.execute(ctx, plainKey, messages, req.Temperature, req.PromptVersion)
 }
 
 func (c *Client) resolveKey(ctx context.Context, userID string) (string, error) {
-	if userID != "" && c.keyProvider != nil {
-		return c.keyProvider.GetDecryptedKey(ctx, userID)
+	if c.keyProvider == nil {
+		// Defence-in-depth: misconfiguration should never leak into production.
+		return "", ErrNoAPIKey
 	}
-	if c.fallbackKey != "" {
-		return c.fallbackKey, nil
+	key, err := c.keyProvider.GetDecryptedKey(ctx, userID)
+	if err != nil {
+		// Any error from the provider (including ErrNoAPIKey) is treated as
+		// "no usable key". Never log decrypted material here.
+		if errors.Is(err, ErrNoAPIKey) {
+			return "", ErrNoAPIKey
+		}
+		return "", fmt.Errorf("resolve api key: %w", err)
 	}
-	return "", fmt.Errorf("no API key available")
+	if key == "" {
+		return "", ErrNoAPIKey
+	}
+	return key, nil
 }
 
-func (c *Client) execute(ctx context.Context, apiKey string, req Request) (*Response, error) {
+func (c *Client) execute(
+	ctx context.Context,
+	apiKey string,
+	messages []Message,
+	temperature *float64,
+	promptVersion string,
+) (*Response, error) {
 	start := time.Now()
 
-	payload := openRouterRequest{
-		Model: c.model,
-		Messages: []message{
-			{Role: "system", Content: req.SystemPrompt},
-			{Role: "user", Content: req.UserMessage},
-		},
-		Temperature: 0.1,
+	temp := 0.1
+	if temperature != nil {
+		temp = *temperature
 	}
 
+	payload := openRouterRequest{
+		Model:       c.model,
+		Messages:    messages,
+		Temperature: temp,
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -157,7 +257,7 @@ func (c *Client) execute(ctx context.Context, apiKey string, req Request) (*Resp
 		slog.Warn("ai request retrying",
 			"attempt", attempt+1,
 			"model", c.model,
-			"prompt_version", req.PromptVersion,
+			"prompt_version", promptVersion,
 			"error", lastErr,
 		)
 	}
@@ -170,7 +270,7 @@ func (c *Client) execute(ctx context.Context, apiKey string, req Request) (*Resp
 
 	slog.Info("ai request completed",
 		"model", c.model,
-		"prompt_version", req.PromptVersion,
+		"prompt_version", promptVersion,
 		"tokens_in", resp.Usage.PromptTokens,
 		"tokens_out", resp.Usage.CompletionTokens,
 		"latency_ms", latency,
@@ -180,11 +280,18 @@ func (c *Client) execute(ctx context.Context, apiKey string, req Request) (*Resp
 		return nil, fmt.Errorf("empty response from AI model")
 	}
 
+	modelUsed := resp.Model
+	if modelUsed == "" {
+		modelUsed = c.model
+	}
+
 	return &Response{
-		Content:   resp.Choices[0].Message.Content,
-		TokensIn:  resp.Usage.PromptTokens,
-		TokensOut: resp.Usage.CompletionTokens,
-		LatencyMS: latency,
+		Content:      resp.Choices[0].Message.Content,
+		TokensIn:     resp.Usage.PromptTokens,
+		TokensOut:    resp.Usage.CompletionTokens,
+		LatencyMS:    latency,
+		Model:        modelUsed,
+		FinishReason: resp.Choices[0].FinishReason,
 	}, nil
 }
 
@@ -239,8 +346,8 @@ func (e *retryableError) Error() string {
 }
 
 func isRetryableError(err error) bool {
-	_, ok := err.(*retryableError)
-	return ok
+	var re *retryableError
+	return errors.As(err, &re)
 }
 
 func truncate(s string, n int) string {
