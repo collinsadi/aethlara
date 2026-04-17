@@ -182,13 +182,18 @@ func (s *service) RevalidateAPIKey(ctx context.Context, userID string) (*APIKeyM
 
 // GetDecryptedKey implements ai.APIKeyProvider.
 // Called only from internal/ai/openrouter.go — nowhere else decrypts keys.
+// Returns ai.ErrNoAPIKey (the canonical sentinel) when no usable key exists.
 func (s *service) GetDecryptedKey(ctx context.Context, userID string) (string, error) {
 	rec, err := s.repo.GetAPIKeyByUserID(ctx, userID)
 	if err != nil {
 		return "", ErrInternal
 	}
-	if rec == nil || rec.ValidationStatus == "revoked" {
-		return "", ErrNoAPIKey
+	if rec == nil {
+		return "", ai.ErrNoAPIKey
+	}
+	// Any non-valid status means no usable key.
+	if rec.ValidationStatus != "valid" {
+		return "", ai.ErrNoAPIKey
 	}
 
 	plainKey, err := s.apiKeySvc.Decrypt(rec.EncryptedKey)
