@@ -48,7 +48,10 @@ type Config struct {
 	R2PublicEndpoint  string
 
 	// OpenRouter AI
-	OpenRouterAPIKey  string // optional — users supply per-user keys via settings
+	// NOTE: there is no platform-level API key. Every AI call resolves a key
+	// from the authenticated user's encrypted record via apikey/settings. If a
+	// user has no valid key, the AI gate middleware + service-level check
+	// ensure no OpenRouter request is ever made on their behalf.
 	OpenRouterBaseURL string
 	OpenRouterModel   string
 
@@ -150,7 +153,6 @@ func Load() (*Config, error) {
 		R2BucketName:      required("R2_BUCKET_NAME"),
 		R2PublicEndpoint:  optional("R2_PUBLIC_ENDPOINT", ""),
 
-		OpenRouterAPIKey:  optional("OPENROUTER_API_KEY", ""), // optional — users bring their own key
 		OpenRouterBaseURL: optional("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
 		OpenRouterModel:   optional("OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet"),
 
