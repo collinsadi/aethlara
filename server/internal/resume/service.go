@@ -106,7 +106,7 @@ func (s *service) Upload(ctx context.Context, req UploadRequest) (*Resume, error
 	}
 
 	// Extract text and run AI — failures are recorded in DB but file is preserved
-	extractedJSON, extractErr := s.processExtraction(ctx, resume.ID, req.FileData, format)
+	extractedJSON, extractErr := s.processExtraction(ctx, req.UserID, resume.ID, req.FileData, format)
 
 	if extractErr != nil {
 		errMsg := extractErr.Error()
@@ -126,7 +126,7 @@ func (s *service) Upload(ctx context.Context, req UploadRequest) (*Resume, error
 	return resume, nil
 }
 
-func (s *service) processExtraction(ctx context.Context, resumeID string, data []byte, format string) (string, error) {
+func (s *service) processExtraction(ctx context.Context, userID, resumeID string, data []byte, format string) (string, error) {
 	text, err := ExtractText(data, format)
 	if err != nil {
 		return "", fmt.Errorf("text extraction: %w", err)
@@ -136,6 +136,7 @@ func (s *service) processExtraction(ctx context.Context, resumeID string, data [
 	}
 
 	aiResp, err := s.ai.Complete(ctx, ai.Request{
+		UserID:        userID,
 		SystemPrompt:  prompts.ResumeExtractionSystemPrompt(),
 		UserMessage:   text,
 		PromptVersion: prompts.ResumeExtractionV1,
