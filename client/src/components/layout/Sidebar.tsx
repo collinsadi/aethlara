@@ -113,14 +113,14 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       </nav>
 
       <div className="p-3">
-        <div
+        {/* <div
           className={`glass-card p-3 ${collapsed ? "items-center" : ""}`}
           style={{ display: collapsed ? "none" : "block" }}
         >
           <p className="text-xs text-muted-foreground leading-relaxed">
             Tip: paste a job URL or description to start a match analysis.
           </p>
-        </div>
+        </div> */}
       </div>
     </motion.aside>
   );

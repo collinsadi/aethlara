@@ -6,6 +6,7 @@ import { useJobs } from '@/hooks/useJobs'
 import { ApiJobCard } from '@/components/jobs/ApiJobCard'
 import { CreateJobModal } from '@/components/jobs/CreateJobModal'
 import { JobDetailDrawer } from '@/components/jobs/JobDetailDrawer'
+import { ChatDrawer } from '@/components/chat'
 import { ApiKeyStatusBanner } from '@/components/settings/ApiKeyStatusBanner'
 import type { JobStatus } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -26,6 +27,7 @@ export function Jobs() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [createOpen, setCreateOpen] = useState(false)
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
+  const [chatJobId, setChatJobId] = useState<string | null>(null)
   const [searchInput, setSearchInput] = useState(searchParams.get('search') ?? '')
 
   const page = Number(searchParams.get('page') ?? '1')
@@ -215,6 +217,7 @@ export function Jobs() {
               job={job}
               index={i}
               onClick={(id) => setSelectedJobId(id)}
+              onChat={(id) => setChatJobId(id)}
             />
           ))}
         </div>
@@ -280,6 +283,15 @@ export function Jobs() {
       <JobDetailDrawer
         jobId={selectedJobId}
         onClose={() => setSelectedJobId(null)}
+        onOpenChat={(id) => setChatJobId(id)}
+      />
+      <ChatDrawer
+        jobId={chatJobId}
+        onClose={() => setChatJobId(null)}
+        onOpenJob={(id) => {
+          setChatJobId(null)
+          setSelectedJobId(id)
+        }}
       />
     </div>
   )

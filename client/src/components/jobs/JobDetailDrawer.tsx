@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   X, MapPin, Globe, Briefcase, TrendingUp, FileText,
-  ExternalLink, ChevronDown, AlertTriangle,
+  ExternalLink, ChevronDown, AlertTriangle, MessageSquare,
 } from 'lucide-react'
 import { useJobDetail, useJobPreviewUrl, useUpdateJobStatus, useDeleteJob } from '@/hooks/useJobs'
 import { ALLOWED_TRANSITIONS } from '@/lib/types'
@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils'
 interface Props {
   jobId: string | null
   onClose: () => void
+  onOpenChat?: (jobId: string) => void
 }
 
 const STATUS_LABELS: Record<JobStatus, string> = {
@@ -32,7 +33,7 @@ const STATUS_COLORS: Record<JobStatus, string> = {
   withdrawn: 'bg-neutral-100 text-neutral-500 dark:bg-neutral-900 dark:text-neutral-400',
 }
 
-export function JobDetailDrawer({ jobId, onClose }: Props) {
+export function JobDetailDrawer({ jobId, onClose, onOpenChat }: Props) {
   const { data: job, isLoading } = useJobDetail(jobId)
   const updateStatus = useUpdateJobStatus()
   const deleteJob = useDeleteJob()
@@ -142,6 +143,17 @@ export function JobDetailDrawer({ jobId, onClose }: Props) {
                       <ExternalLink className="w-3 h-3" />
                       View original posting
                     </a>
+                  )}
+
+                  {job.alignment_status === 'completed' && onOpenChat && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenChat(job.id)}
+                      className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-brand bg-brand/10 hover:bg-brand/20 border border-brand/30 rounded-xl px-3 py-2 transition-colors"
+                    >
+                      <MessageSquare className="w-4 h-4" />
+                      Chat about this job
+                    </button>
                   )}
                 </div>
 

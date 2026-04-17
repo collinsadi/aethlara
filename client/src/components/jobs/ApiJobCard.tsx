@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Building2, MapPin, Globe, Clock, Zap } from 'lucide-react'
+import { Building2, MapPin, Globe, Clock, Zap, MessageSquare } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ApiJob, JobStatus } from '@/lib/types'
 
@@ -7,6 +7,7 @@ interface Props {
   job: ApiJob
   index?: number
   onClick: (id: string) => void
+  onChat?: (id: string) => void
 }
 
 const STATUS_LABELS: Record<JobStatus, string> = {
@@ -50,10 +51,12 @@ function MatchPill({ score }: { score: number | null }) {
   )
 }
 
-export function ApiJobCard({ job, index = 0, onClick }: Props) {
+export function ApiJobCard({ job, index = 0, onClick, onChat }: Props) {
   const isPending =
     job.extraction_status === 'pending' || job.extraction_status === 'processing' ||
     job.alignment_status === 'processing'
+
+  const canChat = onChat && job.alignment_status === 'completed'
 
   return (
     <motion.div
@@ -111,16 +114,40 @@ export function ApiJobCard({ job, index = 0, onClick }: Props) {
           </span>
         </div>
 
-        <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
+        <div className="mt-3 pt-3 border-t border-border flex items-center justify-between gap-2">
           <span className={cn(
             'px-2.5 py-1 rounded-full text-[10px] font-medium uppercase tracking-wider',
             STATUS_COLORS[job.status]
           )}>
             {STATUS_LABELS[job.status]}
           </span>
-          <span className="text-[10px] text-muted-foreground group-hover:text-brand transition-colors">
-            View details →
-          </span>
+          <div className="flex items-center gap-2">
+            {canChat && (
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onChat!(job.id)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    onChat!(job.id)
+                  }
+                }}
+                className="inline-flex items-center gap-1 text-[10px] font-medium text-brand bg-brand/10 hover:bg-brand/20 border border-brand/30 rounded-full px-2 py-0.5 transition-colors cursor-pointer"
+                aria-label="Open chat for this job"
+              >
+                <MessageSquare className="w-3 h-3" />
+                Chat
+              </span>
+            )}
+            <span className="text-[10px] text-muted-foreground group-hover:text-brand transition-colors">
+              View details →
+            </span>
+          </div>
         </div>
       </motion.button>
     </motion.div>
