@@ -8,6 +8,13 @@
 //     zeroed before the function returns.
 //   - If a user has no valid key, ErrNoAPIKey is returned and callers MUST
 //     propagate it as 403 API_KEY_REQUIRED.
+//
+// Observability invariant:
+//   - We log only structured, non-sensitive fields (model, prompt_version,
+//     ai_stage, token counts, latency, classified error type, truncated
+//     error message).
+//   - We never log: user prompt content, model response content, API keys,
+//     resume text, job text, email, or any other PII.
 package ai
 
 import (
@@ -20,13 +27,19 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"strings"
 	"time"
+
+	"github.com/collinsadi/aethlara/internal/logger"
+	"github.com/collinsadi/aethlara/pkg/sanitise"
 )
 
 const (
-	defaultTimeout = 60 * time.Second
-	maxRetries     = 3
-	retryBaseDelay = time.Second
+	defaultTimeout       = 60 * time.Second
+	maxRetries           = 3
+	retryBaseDelay       = time.Second
+	errMessageMaxRunes   = 200
+	logComponent         = "ai"
 )
 
 // ErrNoAPIKey is the typed sentinel returned whenever a user has no valid
@@ -56,6 +69,18 @@ const (
 	RoleAssistant = "assistant"
 )
 
+// Stage labels attached to AI calls for observability. These are the ONLY
+// values that should be passed as Request.Stage / ChatRequest.Stage so the
+// log schema stays stable and dashboards remain queryable.
+const (
+	StageJobExtraction    = "job_extraction"
+	StageResumeAlignment  = "resume_alignment"
+	StageResumeExtraction = "resume_extraction"
+	StageChat             = "chat"
+	StageAutofill         = "autofill"
+	StageKeyValidation    = "key_validation"
+)
+
 // Message is a single turn in a conversation sent to the model.
 type Message struct {
 	Role    string `json:"role"`
@@ -69,6 +94,9 @@ type Request struct {
 	SystemPrompt  string
 	UserMessage   string
 	PromptVersion string
+	// Stage is an observability label identifying which pipeline stage this
+	// call belongs to (see the Stage* constants). Not sent to OpenRouter.
+	Stage string
 	// Temperature overrides the default of 0.1 when non-nil.
 	Temperature *float64
 }
@@ -79,6 +107,7 @@ type ChatRequest struct {
 	SystemPrompt  string    // injected as the first system message
 	Messages      []Message // conversation history, oldest first
 	PromptVersion string
+	Stage         string
 	Temperature   *float64
 }
 
@@ -145,6 +174,7 @@ func (c *Client) Complete(ctx context.Context, req Request) (*Response, error) {
 		UserID:        req.UserID,
 		SystemPrompt:  req.SystemPrompt,
 		PromptVersion: req.PromptVersion,
+		Stage:         req.Stage,
 		Temperature:   req.Temperature,
 		Messages:      []Message{{Role: RoleUser, Content: req.UserMessage}},
 	}
@@ -170,7 +200,7 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*Response, error) {
 	}
 	messages = append(messages, req.Messages...)
 
-	resp, err := c.execute(ctx, apiKey, messages, req.Temperature, req.PromptVersion)
+	resp, err := c.execute(ctx, apiKey, messages, req.Temperature, req.PromptVersion, req.Stage)
 	// Zero the plaintext key from this stack frame before returning.
 	apiKey = ""
 	_ = apiKey
@@ -186,7 +216,11 @@ func (c *Client) CompleteWithKey(ctx context.Context, plainKey string, req Reque
 		messages = append(messages, Message{Role: RoleSystem, Content: req.SystemPrompt})
 	}
 	messages = append(messages, Message{Role: RoleUser, Content: req.UserMessage})
-	return c.execute(ctx, plainKey, messages, req.Temperature, req.PromptVersion)
+	stage := req.Stage
+	if stage == "" {
+		stage = StageKeyValidation
+	}
+	return c.execute(ctx, plainKey, messages, req.Temperature, req.PromptVersion, stage)
 }
 
 func (c *Client) resolveKey(ctx context.Context, userID string) (string, error) {
@@ -215,7 +249,18 @@ func (c *Client) execute(
 	messages []Message,
 	temperature *float64,
 	promptVersion string,
+	stage string,
 ) (*Response, error) {
+	log := logger.FromContext(ctx).With(
+		"component", logComponent,
+		"operation", "Complete",
+		"model", c.model,
+		"prompt_version", promptVersion,
+		"ai_stage", stage,
+	)
+
+	log.Debug("ai request started")
+
 	start := time.Now()
 
 	temp := 0.1
@@ -230,6 +275,11 @@ func (c *Client) execute(
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
+		log.Error("ai request failed",
+			"error", logger.TruncateError(err, errMessageMaxRunes),
+			"error_type", "marshal_error",
+			"latency_ms", time.Since(start).Milliseconds(),
+		)
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
@@ -241,6 +291,11 @@ func (c *Client) execute(
 			delay := time.Duration(math.Pow(2, float64(attempt-1))) * retryBaseDelay
 			select {
 			case <-ctx.Done():
+				log.Warn("ai request aborted during backoff",
+					"error_type", ClassifyError(ctx.Err()),
+					"attempt", attempt,
+					"latency_ms", time.Since(start).Milliseconds(),
+				)
 				return nil, ctx.Err()
 			case <-time.After(delay):
 			}
@@ -254,31 +309,39 @@ func (c *Client) execute(
 			break
 		}
 
-		slog.Warn("ai request retrying",
+		log.Warn("ai request retrying",
 			"attempt", attempt+1,
-			"model", c.model,
-			"prompt_version", promptVersion,
-			"error", lastErr,
+			"error", logger.TruncateError(lastErr, errMessageMaxRunes),
+			"error_type", ClassifyError(lastErr),
 		)
-	}
-
-	if lastErr != nil {
-		return nil, lastErr
 	}
 
 	latency := time.Since(start).Milliseconds()
 
-	slog.Info("ai request completed",
-		"model", c.model,
-		"prompt_version", promptVersion,
-		"tokens_in", resp.Usage.PromptTokens,
-		"tokens_out", resp.Usage.CompletionTokens,
-		"latency_ms", latency,
-	)
+	if lastErr != nil {
+		log.Error("ai request failed",
+			"error", logger.TruncateError(lastErr, errMessageMaxRunes),
+			"error_type", ClassifyError(lastErr),
+			"latency_ms", latency,
+		)
+		return nil, lastErr
+	}
 
 	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+		log.Error("ai request failed",
+			"error", "empty response",
+			"error_type", "empty_response",
+			"latency_ms", latency,
+		)
 		return nil, fmt.Errorf("empty response from AI model")
 	}
+
+	log.LogAttrs(ctx, slog.LevelInfo, "ai request completed",
+		slog.Int("tokens_in", resp.Usage.PromptTokens),
+		slog.Int("tokens_out", resp.Usage.CompletionTokens),
+		slog.String("finish_reason", resp.Choices[0].FinishReason),
+		slog.Int64("latency_ms", latency),
+	)
 
 	modelUsed := resp.Model
 	if modelUsed == "" {
@@ -286,7 +349,7 @@ func (c *Client) execute(
 	}
 
 	return &Response{
-		Content:      resp.Choices[0].Message.Content,
+		Content:      sanitise.ResumeText(resp.Choices[0].Message.Content),
 		TokensIn:     resp.Usage.PromptTokens,
 		TokensOut:    resp.Usage.CompletionTokens,
 		LatencyMS:    latency,
@@ -302,7 +365,8 @@ func (c *Client) doRequest(ctx context.Context, apiKey string, body []byte) (*op
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Content-Type", "application/json; charset=utf-8")
+	httpReq.Header.Set("Accept", "application/json; charset=utf-8")
 	httpReq.Header.Set("HTTP-Referer", "https://github.com/collinsadi/aethlara")
 
 	httpResp, err := c.http.Do(httpReq)
@@ -315,6 +379,7 @@ func (c *Client) doRequest(ctx context.Context, apiKey string, body []byte) (*op
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
+	respBody = sanitise.StripBOM(respBody)
 
 	if httpResp.StatusCode == http.StatusTooManyRequests ||
 		httpResp.StatusCode == http.StatusBadGateway ||
@@ -348,6 +413,41 @@ func (e *retryableError) Error() string {
 func isRetryableError(err error) bool {
 	var re *retryableError
 	return errors.As(err, &re)
+}
+
+// ClassifyError returns a stable, low-cardinality label describing the
+// category of an AI-layer error. The label is safe to emit as a log field
+// and to aggregate on dashboards.
+//
+// Labels:
+//   - context_canceled — upstream request context was cancelled
+//   - timeout          — context.DeadlineExceeded or similar deadline breach
+//   - ai_auth_error    — 401 from OpenRouter (bad/expired key)
+//   - ai_rate_limited  — 429 from OpenRouter
+//   - ai_server_error  — 5xx from OpenRouter
+//   - ai_unknown_error — anything else
+func ClassifyError(err error) string {
+	if err == nil {
+		return ""
+	}
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "context_canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "HTTP 401"), strings.Contains(msg, "API error 401"):
+		return "ai_auth_error"
+	case strings.Contains(msg, "HTTP 429"), strings.Contains(msg, "API error 429"):
+		return "ai_rate_limited"
+	case strings.Contains(msg, "HTTP 500"), strings.Contains(msg, "HTTP 502"),
+		strings.Contains(msg, "HTTP 503"), strings.Contains(msg, "HTTP 504"):
+		return "ai_server_error"
+	default:
+		return "ai_unknown_error"
+	}
 }
 
 func truncate(s string, n int) string {
