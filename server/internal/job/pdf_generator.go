@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/go-pdf/fpdf"
+
+	"github.com/collinsadi/aethlara/pkg/sanitise"
 )
 
 const (
@@ -44,7 +46,7 @@ func GeneratePDF(tr *TailoredResume) ([]byte, error) {
 	bullet := func(txt string) {
 		setFont("", 10)
 		f.SetX(marginLR + 4)
-		f.MultiCell(contentW-4, lineHeight, "• "+txt, "", "L", false)
+		f.MultiCell(contentW-4, lineHeight, "- "+sanitise.ResumeText(txt), "", "L", false)
 	}
 
 	kvLine := func(label, value string) {
@@ -225,7 +227,7 @@ func strField(m map[string]any, key string) string {
 		return ""
 	}
 	v, _ := m[key].(string)
-	return strings.TrimSpace(v)
+	return sanitise.ResumeText(strings.TrimSpace(v))
 }
 
 func boolField(m map[string]any, key string) bool {
@@ -247,7 +249,7 @@ func strSliceField(m map[string]any, key string) []string {
 	out := make([]string, 0, len(raw))
 	for _, v := range raw {
 		if s, ok := v.(string); ok && s != "" {
-			out = append(out, s)
+			out = append(out, sanitise.ResumeText(s))
 		}
 	}
 	return out
