@@ -44,6 +44,11 @@ type Repository interface {
 	RevokeRefreshToken(ctx context.Context, id string) error
 	RevokeAllUserRefreshTokens(ctx context.Context, userID string) error
 
+	CreateExtensionToken(ctx context.Context, t ExtensionToken) error
+	GetExtensionToken(ctx context.Context, tokenHash string) (*ExtensionToken, error)
+	MarkExtensionTokenUsed(ctx context.Context, id string) error
+	CountRecentExtensionTokens(ctx context.Context, userID string, since time.Time) (int, error)
+
 	CleanupExpired(ctx context.Context) error
 }
 
@@ -160,6 +165,59 @@ func (r *pgxRepository) CleanupExpired(ctx context.Context) error {
 		WHERE expires_at < NOW() OR (revoked = true AND created_at < NOW() - INTERVAL '7 days')
 	`)
 	return err
+}
+
+// ── Extension tokens ──────────────────────────────────────────────────────────
+
+type ExtensionToken struct {
+	ID        string
+	UserID    string
+	TokenHash string
+	Used      bool
+	ExpiresAt time.Time
+	Origin    string
+	CreatedAt time.Time
+}
+
+func (r *pgxRepository) CreateExtensionToken(ctx context.Context, t ExtensionToken) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO extension_tokens (user_id, token_hash, expires_at, origin)
+		VALUES ($1, $2, $3, $4)
+	`, t.UserID, t.TokenHash, t.ExpiresAt, nullableString(t.Origin))
+	return err
+}
+
+func (r *pgxRepository) GetExtensionToken(ctx context.Context, tokenHash string) (*ExtensionToken, error) {
+	var t ExtensionToken
+	var origin *string
+	err := r.db.QueryRow(ctx, `
+		SELECT id, user_id, token_hash, used, expires_at, origin, created_at
+		FROM extension_tokens WHERE token_hash = $1
+	`, tokenHash).Scan(&t.ID, &t.UserID, &t.TokenHash, &t.Used, &t.ExpiresAt, &origin, &t.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if origin != nil {
+		t.Origin = *origin
+	}
+	return &t, nil
+}
+
+func (r *pgxRepository) MarkExtensionTokenUsed(ctx context.Context, id string) error {
+	_, err := r.db.Exec(ctx, `UPDATE extension_tokens SET used = true WHERE id = $1`, id)
+	return err
+}
+
+func (r *pgxRepository) CountRecentExtensionTokens(ctx context.Context, userID string, since time.Time) (int, error) {
+	var count int
+	err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM extension_tokens
+		WHERE user_id = $1 AND created_at >= $2
+	`, userID, since).Scan(&count)
+	return count, err
 }
 
 func nullableString(s string) *string {
