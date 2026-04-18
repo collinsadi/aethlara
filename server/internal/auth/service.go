@@ -15,16 +15,18 @@ import (
 )
 
 var (
-	ErrUserExists      = errors.New("email already registered")
-	ErrInvalidOTP      = errors.New("invalid verification code")
-	ErrOTPExpired      = errors.New("verification code has expired")
-	ErrOTPMaxAttempts  = errors.New("too many incorrect attempts")
-	ErrUserNotFound    = errors.New("user not found")
-	ErrTokenNotFound   = errors.New("token not found")
-	ErrTokenRevoked    = errors.New("token has been revoked")
-	ErrTokenExpired    = errors.New("token has expired")
-	ErrTokenOwnership  = errors.New("token does not belong to user")
-	ErrInternal        = errors.New("internal error")
+	ErrUserExists            = errors.New("email already registered")
+	ErrInvalidOTP            = errors.New("invalid verification code")
+	ErrOTPExpired            = errors.New("verification code has expired")
+	ErrOTPMaxAttempts        = errors.New("too many incorrect attempts")
+	ErrUserNotFound          = errors.New("user not found")
+	ErrTokenNotFound         = errors.New("token not found")
+	ErrTokenRevoked          = errors.New("token has been revoked")
+	ErrTokenExpired          = errors.New("token has expired")
+	ErrTokenOwnership        = errors.New("token does not belong to user")
+	ErrExtensionTokenInvalid = errors.New("extension token invalid or expired")
+	ErrExtensionRateLimited  = errors.New("extension token rate limit exceeded")
+	ErrInternal              = errors.New("internal error")
 )
 
 type SignupRequest struct {
@@ -57,6 +59,19 @@ type RefreshRequest struct {
 	IPAddress    string
 }
 
+// ExtensionTokenResult is returned by GenerateExtensionToken.
+type ExtensionTokenResult struct {
+	Token     string
+	ExpiresIn int
+}
+
+// ExtensionAuthResult is returned by ExchangeExtensionToken.
+type ExtensionAuthResult struct {
+	AccessToken string
+	ExpiresAt   time.Time
+	User        *user.User
+}
+
 type Service interface {
 	Signup(ctx context.Context, req SignupRequest) error
 	VerifyOTP(ctx context.Context, req VerifyOTPRequest) (*TokenPair, error)
@@ -64,6 +79,8 @@ type Service interface {
 	Refresh(ctx context.Context, req RefreshRequest) (*TokenPair, error)
 	Logout(ctx context.Context, userID, refreshToken string) error
 	LogoutAll(ctx context.Context, userID string) error
+	GenerateExtensionToken(ctx context.Context, userID, origin string) (*ExtensionTokenResult, error)
+	ExchangeExtensionToken(ctx context.Context, rawToken string) (*ExtensionAuthResult, error)
 }
 
 type service struct {
@@ -274,6 +291,76 @@ func (s *service) Logout(ctx context.Context, userID, rawToken string) error {
 
 func (s *service) LogoutAll(ctx context.Context, userID string) error {
 	return s.authRepo.RevokeAllUserRefreshTokens(ctx, userID)
+}
+
+func (s *service) GenerateExtensionToken(ctx context.Context, userID, origin string) (*ExtensionTokenResult, error) {
+	// Rate limit: max 5 tokens per user per hour
+	since := time.Now().Add(-time.Hour)
+	count, err := s.authRepo.CountRecentExtensionTokens(ctx, userID, since)
+	if err != nil {
+		slog.Error("GenerateExtensionToken: CountRecentExtensionTokens", "error", err)
+		return nil, ErrInternal
+	}
+	if count >= s.cfg.ExtensionTokenRatePerHour {
+		return nil, ErrExtensionRateLimited
+	}
+
+	rawToken, tokenHash, err := tokenutil.GenerateRefreshToken() // 32 bytes, hex-encoded
+	if err != nil {
+		return nil, ErrInternal
+	}
+
+	expiry := s.cfg.ExtensionTokenExpirySecs
+	expiresAt := time.Now().Add(time.Duration(expiry) * time.Second)
+
+	if err := s.authRepo.CreateExtensionToken(ctx, ExtensionToken{
+		UserID:    userID,
+		TokenHash: tokenHash,
+		ExpiresAt: expiresAt,
+		Origin:    origin,
+	}); err != nil {
+		slog.Error("GenerateExtensionToken: CreateExtensionToken", "error", err)
+		return nil, ErrInternal
+	}
+
+	return &ExtensionTokenResult{Token: rawToken, ExpiresIn: expiry}, nil
+}
+
+func (s *service) ExchangeExtensionToken(ctx context.Context, rawToken string) (*ExtensionAuthResult, error) {
+	tokenHash := tokenutil.HashToken(rawToken)
+
+	t, err := s.authRepo.GetExtensionToken(ctx, tokenHash)
+	if err != nil {
+		slog.Error("ExchangeExtensionToken: GetExtensionToken", "error", err)
+		return nil, ErrExtensionTokenInvalid
+	}
+	// Generic failure — no detail leak
+	if t == nil || t.Used || time.Now().After(t.ExpiresAt) {
+		return nil, ErrExtensionTokenInvalid
+	}
+
+	// Mark used atomically before issuing token — prevents replay
+	if err := s.authRepo.MarkExtensionTokenUsed(ctx, t.ID); err != nil {
+		slog.Error("ExchangeExtensionToken: MarkExtensionTokenUsed", "error", err)
+		return nil, ErrExtensionTokenInvalid
+	}
+
+	u, err := s.userRepo.GetByID(ctx, t.UserID)
+	if err != nil || u == nil {
+		return nil, ErrExtensionTokenInvalid
+	}
+
+	expiry := s.cfg.JWTAccessExpiry()
+	accessToken, err := tokenutil.GenerateAccessToken(u.ID, s.cfg.JWTAccessSecret, expiry)
+	if err != nil {
+		return nil, ErrInternal
+	}
+
+	return &ExtensionAuthResult{
+		AccessToken: accessToken,
+		ExpiresAt:   time.Now().Add(expiry),
+		User:        u,
+	}, nil
 }
 
 func (s *service) issueTokenPair(ctx context.Context, u *user.User, userAgent, ipAddress string) (*TokenPair, error) {
