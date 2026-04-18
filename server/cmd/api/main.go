@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"golang.org/x/time/rate"
 
 	"github.com/collinsadi/aethlara/internal/ai"
 	"github.com/collinsadi/aethlara/internal/analytics"
@@ -123,17 +122,12 @@ func main() {
 	// Router
 	r := chi.NewRouter()
 
+	r.Use(middleware.RealIP)           // must be first — sets real client IP in context
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(middleware.RecoverPanic)
 	r.Use(middleware.CORS(cfg))
 	r.Use(middleware.SecurityHeaders(cfg))
-
-	globalRL := middleware.NewRateLimiter(
-		rate.Every(time.Minute/time.Duration(cfg.RateLimitRequestsPerMinute)),
-		cfg.RateLimitBurst,
-	)
-	r.Use(globalRL.Middleware())
 
 	r.Get("/health", healthHandler(db, cfg))
 

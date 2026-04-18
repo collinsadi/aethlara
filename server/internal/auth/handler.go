@@ -329,8 +329,5 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 
 func extractIP(r *http.Request) string {
-	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return ip
-	}
-	return r.RemoteAddr
+	return middleware.GetRealIP(r)
 }

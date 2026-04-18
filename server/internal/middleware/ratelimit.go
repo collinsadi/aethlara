@@ -1,156 +1,169 @@
 package middleware
 
 import (
-	"net"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
-	"golang.org/x/time/rate"
-
+	"github.com/collinsadi/aethlara/internal/logger"
 	"github.com/collinsadi/aethlara/pkg/response"
 )
 
-// ---- shared entry type ----
-
-type limiterEntry struct {
-	limiter  *rate.Limiter
-	lastSeen time.Time
+// RateLimitConfig defines limits for a specific endpoint group.
+type RateLimitConfig struct {
+	Namespace   string
+	Requests    int
+	Window      time.Duration
+	BurstBuffer int
 }
 
-// ---- IP-based rate limiter (global middleware) ----
+// Predefined limit profiles — endpoints use one of these.
+var (
+	AuthLimits = RateLimitConfig{
+		Namespace: "auth", Requests: 5, Window: 15 * time.Minute,
+	}
+	OTPLimits = RateLimitConfig{
+		Namespace: "otp", Requests: 10, Window: 10 * time.Minute,
+	}
+	AILimits = RateLimitConfig{
+		Namespace: "ai", Requests: 10, Window: time.Hour, BurstBuffer: 2,
+	}
+	ChatLimits = RateLimitConfig{
+		Namespace: "chat", Requests: 30, Window: time.Hour, BurstBuffer: 5,
+	}
+	APILimits = RateLimitConfig{
+		Namespace: "api", Requests: 200, Window: time.Minute, BurstBuffer: 20,
+	}
+	ExtensionTokenLimits = RateLimitConfig{
+		Namespace: "ext_token", Requests: 10, Window: time.Minute,
+	}
+)
 
+// bucket holds the sliding window state for a single rate limit key.
+type bucket struct {
+	timestamps []time.Time
+	mu         sync.Mutex
+	lastAccess time.Time
+}
+
+// RateLimiter is a per-key sliding window rate limiter backed by an in-memory
+// store with TTL-based cleanup.
 type RateLimiter struct {
-	mu      sync.Mutex
-	entries map[string]*limiterEntry
-	r       rate.Limit
-	b       int
+	buckets sync.Map
+	cfg     RateLimitConfig
 }
 
-// NewRateLimiter creates a per-IP token-bucket rate limiter.
-func NewRateLimiter(r rate.Limit, b int) *RateLimiter {
-	rl := &RateLimiter{entries: make(map[string]*limiterEntry), r: r, b: b}
+// NewRateLimiter creates a sliding window rate limiter with the given config.
+func NewRateLimiter(cfg RateLimitConfig) *RateLimiter {
+	rl := &RateLimiter{cfg: cfg}
 	go rl.cleanup()
 	return rl
 }
 
-func (rl *RateLimiter) getLimiter(key string) *rate.Limiter {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	e, ok := rl.entries[key]
-	if !ok {
-		e = &limiterEntry{limiter: rate.NewLimiter(rl.r, rl.b)}
-		rl.entries[key] = e
+func (rl *RateLimiter) Allow(key string) (allowed bool, remaining int, resetAt time.Time) {
+	now := time.Now()
+	windowStart := now.Add(-rl.cfg.Window)
+
+	actual, _ := rl.buckets.LoadOrStore(key, &bucket{lastAccess: now})
+	b := actual.(*bucket)
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	b.lastAccess = now
+
+	// Evict timestamps outside the sliding window.
+	valid := b.timestamps[:0]
+	for _, t := range b.timestamps {
+		if t.After(windowStart) {
+			valid = append(valid, t)
+		}
 	}
-	e.lastSeen = time.Now()
-	return e.limiter
+	b.timestamps = valid
+
+	limit := rl.cfg.Requests + rl.cfg.BurstBuffer
+	remaining = limit - len(b.timestamps)
+
+	if len(b.timestamps) >= limit {
+		if len(b.timestamps) > 0 {
+			resetAt = b.timestamps[0].Add(rl.cfg.Window)
+		} else {
+			resetAt = now.Add(rl.cfg.Window)
+		}
+		return false, 0, resetAt
+	}
+
+	b.timestamps = append(b.timestamps, now)
+	remaining--
+
+	if len(b.timestamps) > 0 {
+		resetAt = b.timestamps[0].Add(rl.cfg.Window)
+	}
+	return true, remaining, resetAt
 }
 
+// cleanup removes buckets that have not been accessed in 2× the window.
 func (rl *RateLimiter) cleanup() {
-	ticker := time.NewTicker(10 * time.Minute)
+	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 	for range ticker.C {
-		rl.mu.Lock()
-		for k, e := range rl.entries {
-			if time.Since(e.lastSeen) > 1*time.Hour {
-				delete(rl.entries, k)
+		cutoff := time.Now().Add(-2 * rl.cfg.Window)
+		rl.buckets.Range(func(key, value interface{}) bool {
+			b := value.(*bucket)
+			b.mu.Lock()
+			stale := b.lastAccess.Before(cutoff)
+			b.mu.Unlock()
+			if stale {
+				rl.buckets.Delete(key)
 			}
-		}
-		rl.mu.Unlock()
-	}
-}
-
-func (rl *RateLimiter) Middleware() func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !rl.getLimiter(realIP(r)).Allow() {
-				w.Header().Set("Retry-After", "60")
-				response.Error(w, http.StatusTooManyRequests, response.CodeRateLimited,
-					"Too many requests. Please try again later.")
-				return
-			}
-			next.ServeHTTP(w, r)
+			return true
 		})
 	}
 }
 
-// ---- User-based rate limiter (for authenticated endpoints) ----
+// Middleware returns an http.Handler middleware for this rate limiter.
+func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := RateLimitKey(r, rl.cfg.Namespace)
+		allowed, remaining, resetAt := rl.Allow(key)
 
-// UserRateLimiter enforces per-user-ID rate limits.
-// Must be applied after RequireAuth so the user ID is already in context.
-type UserRateLimiter struct {
-	mu      sync.Mutex
-	entries map[string]*limiterEntry
-	r       rate.Limit
-	b       int
-}
+		w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", rl.cfg.Requests))
+		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+		w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", resetAt.Unix()))
+		w.Header().Set("X-RateLimit-Namespace", rl.cfg.Namespace)
 
-// NewUserRateLimiter creates a per-user token-bucket rate limiter.
-func NewUserRateLimiter(r rate.Limit, b int) *UserRateLimiter {
-	rl := &UserRateLimiter{entries: make(map[string]*limiterEntry), r: r, b: b}
-	go rl.userCleanup()
-	return rl
-}
+		if !allowed {
+			retryAfter := int(time.Until(resetAt).Seconds()) + 1
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
 
-func (rl *UserRateLimiter) getLimiter(userID string) *rate.Limiter {
-	rl.mu.Lock()
-	defer rl.mu.Unlock()
-	e, ok := rl.entries[userID]
-	if !ok {
-		e = &limiterEntry{limiter: rate.NewLimiter(rl.r, rl.b)}
-		rl.entries[userID] = e
-	}
-	e.lastSeen = time.Now()
-	return e.limiter
-}
+			logger.FromContext(r.Context()).Warn("rate limit exceeded",
+				"namespace", rl.cfg.Namespace,
+				"key_type", strings.Split(key, ":")[0],
+				"reset_at", resetAt,
+			)
 
-func (rl *UserRateLimiter) userCleanup() {
-	ticker := time.NewTicker(30 * time.Minute)
-	defer ticker.Stop()
-	for range ticker.C {
-		rl.mu.Lock()
-		for k, e := range rl.entries {
-			if time.Since(e.lastSeen) > 2*time.Hour {
-				delete(rl.entries, k)
-			}
+			response.Error(w, http.StatusTooManyRequests, response.CodeRateLimited,
+				"Too many requests. Please slow down.")
+			return
 		}
-		rl.mu.Unlock()
-	}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
-func (rl *UserRateLimiter) Middleware() func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			userID, ok := UserIDFromContext(r.Context())
-			if !ok {
-				response.Error(w, http.StatusUnauthorized, response.CodeUnauthorized,
-					"Authentication required.")
-				return
-			}
-			if !rl.getLimiter(userID).Allow() {
-				w.Header().Set("Retry-After", "60")
-				response.Error(w, http.StatusTooManyRequests, response.CodeRateLimited,
-					"Too many requests. Please try again later.")
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
+// RateLimitKey returns the appropriate key for rate limiting a request.
+//
+// Strategy:
+//   - Authenticated requests: keyed by user ID — fair per-user limits
+//   - Unauthenticated requests: keyed by real IP — prevents anonymous abuse
+//
+// This means User A hitting their limit does NOT affect User B, and a user
+// behind a shared IP (office, VPN) is not penalised for others on auth'd endpoints.
+func RateLimitKey(r *http.Request, namespace string) string {
+	if userID, ok := UserIDFromContext(r.Context()); ok && userID != "" {
+		return "user:" + userID + ":" + namespace
 	}
-}
-
-// ---- helpers ----
-
-func realIP(r *http.Request) string {
-	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return ip
-	}
-	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		return strings.TrimSpace(strings.SplitN(forwarded, ",", 2)[0])
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+	return "ip:" + GetRealIP(r) + ":" + namespace
 }

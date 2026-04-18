@@ -57,7 +57,7 @@ func Logger(next http.Handler) http.Handler {
 			slog.String("path", r.URL.Path),
 			slog.Int("status", rec.status),
 			slog.Int64("latency_ms", time.Since(start).Milliseconds()),
-			slog.String("remote_addr", realIP(r)),
+			slog.String("remote_addr", GetRealIP(r)),
 			slog.String("user_agent", r.UserAgent()),
 		)
 	})
