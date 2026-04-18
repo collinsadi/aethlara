@@ -8,6 +8,7 @@ import { useJobDetail, useJobPreviewUrl, useUpdateJobStatus, useDeleteJob } from
 import { ALLOWED_TRANSITIONS } from '@/lib/types'
 import type { JobStatus } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { sanitiseResumeText } from '@/lib/sanitise'
 
 interface Props {
   jobId: string | null
@@ -214,7 +215,7 @@ export function JobDetailDrawer({ jobId, onClose, onOpenChat }: Props) {
                       {job.gaps.map((g, i) => (
                         <li key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
                           <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0 mt-0.5" />
-                          {g}
+                          {sanitiseResumeText(g)}
                         </li>
                       ))}
                     </ul>

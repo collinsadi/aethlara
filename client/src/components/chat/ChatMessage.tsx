@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from '@/lib/utils'
 import type { ApiChatMessage } from '@/lib/types'
+import { sanitiseResumeText } from '@/lib/sanitise'
 
 interface Props {
   message: ApiChatMessage
@@ -158,7 +159,7 @@ export const ChatMessage = memo(function ChatMessage({ message, grouped, onRetry
           ) : isUser ? (
             <p className="whitespace-pre-wrap">{message.content}</p>
           ) : (
-            <AssistantMarkdown content={message.content || ''} />
+            <AssistantMarkdown content={sanitiseResumeText(message.content || '')} />
           )}
 
           {isError && (
