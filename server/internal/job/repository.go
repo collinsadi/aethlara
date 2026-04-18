@@ -29,8 +29,10 @@ type Repository interface {
 	UpdateStatus(ctx context.Context, id, userID, status string, appliedAt *time.Time, notes *string) (*Job, error)
 	SoftDelete(ctx context.Context, id, userID string) (*Job, error)
 	FindDuplicate(ctx context.Context, userID, jobURL string, since time.Time) (*Job, error)
-	// GetResumeForJob retrieves ownership + extraction status + JSON from the resumes table.
 	GetResumeForJob(ctx context.Context, resumeID, userID string) (*ResumeRef, error)
+	GetUserProfile(ctx context.Context, userID string) (*UserProfile, error)
+	GetRecentChatMessagesForJob(ctx context.Context, jobID, userID string, limit int) ([]ChatMessage, error)
+	CreateFromPreview(ctx context.Context, j Job) (*Job, error)
 }
 
 type pgxRepository struct {
@@ -306,6 +308,67 @@ func (r *pgxRepository) FindDuplicate(ctx context.Context, userID, jobURL string
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// UserProfile holds the minimal user info needed for autofill context.
+type UserProfile struct {
+	FullName string
+	Email    string
+}
+
+// ChatMessage holds a single message for autofill chat context.
+type ChatMessage struct {
+	Role    string
+	Content string
+}
+
+func (r *pgxRepository) GetUserProfile(ctx context.Context, userID string) (*UserProfile, error) {
+	var p UserProfile
+	err := r.db.QueryRow(ctx, `SELECT full_name, email FROM users WHERE id = $1`, userID).Scan(&p.FullName, &p.Email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return &p, err
+}
+
+func (r *pgxRepository) GetRecentChatMessagesForJob(ctx context.Context, jobID, userID string, limit int) ([]ChatMessage, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT m.role, m.content
+		FROM chat_messages m
+		JOIN chat_sessions s ON s.id = m.session_id
+		WHERE s.job_id = $1 AND s.user_id = $2 AND m.is_error = false
+		ORDER BY m.created_at DESC
+		LIMIT $3`,
+		jobID, userID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var msgs []ChatMessage
+	for rows.Next() {
+		var m ChatMessage
+		if err := rows.Scan(&m.Role, &m.Content); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+	}
+	// Reverse so oldest first
+	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+	return msgs, rows.Err()
+}
+
+func (r *pgxRepository) CreateFromPreview(ctx context.Context, j Job) (*Job, error) {
+	row := r.db.QueryRow(ctx, `
+		INSERT INTO jobs (user_id, resume_id, input_method, job_url, extraction_status, alignment_status)
+		VALUES ($1, $2, 'extension', $3, 'completed', 'completed')
+		RETURNING `+jobCols,
+		j.UserID, j.ResumeID, j.JobURL,
+	)
+	return scanJob(row)
+}
 
 func (r *pgxRepository) GetResumeForJob(ctx context.Context, resumeID, userID string) (*ResumeRef, error) {
 	var ref ResumeRef
