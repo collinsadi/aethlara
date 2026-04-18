@@ -140,6 +140,47 @@ type UpdateStatusRequest struct {
 	Notes  *string
 }
 
+// AutofillField is a single form field submitted for autofill.
+type AutofillField struct {
+	FieldID     string   `json:"field_id"`
+	Label       string   `json:"label"`
+	Type        string   `json:"type"`
+	Placeholder string   `json:"placeholder"`
+	Required    bool     `json:"required"`
+	Options     []string `json:"options"`
+}
+
+// AutofillRequest is the inbound request for POST /jobs/:id/autofill.
+type AutofillRequest struct {
+	Fields  []AutofillField `json:"fields"`
+	PageURL string          `json:"page_url"`
+}
+
+// AutofillResult is returned by Service.Autofill.
+type AutofillResult struct {
+	Fills         map[string]*string `json:"fills"`
+	Confidence    string             `json:"confidence"`
+	UnfilledCount int                `json:"unfilled_count"`
+	ModelUsed     string             `json:"model_used"`
+}
+
+// ExtractFromExtensionRequest is the inbound request for POST /jobs/extract-from-extension.
+type ExtractFromExtensionRequest struct {
+	PageText string `json:"page_text"`
+	PageURL  string `json:"page_url"`
+	ResumeID string `json:"resume_id"`
+}
+
+// ExtensionExtractionResult is returned by Service.ExtractFromExtension.
+type ExtensionExtractionResult struct {
+	Job            *JobDetails     `json:"job"`
+	MatchScore     int             `json:"match_score"`
+	MatchBreakdown *MatchBreakdown `json:"match_breakdown"`
+	Gaps           []string        `json:"gaps"`
+	PreviewToken   string          `json:"preview_token"`
+	PreviewExpires time.Time       `json:"preview_expires_at"`
+}
+
 // ListJobsQuery holds the parsed + validated query params for GET /jobs.
 type ListJobsQuery struct {
 	Page           int
