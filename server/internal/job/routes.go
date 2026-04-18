@@ -13,11 +13,15 @@ import (
 
 func RegisterRoutes(r chi.Router, h *Handler, cfg *config.Config, aiGate func(http.Handler) http.Handler) {
 	// 10/hour per user, burst of 3 per minute
-	createLimiter := middleware.NewUserRateLimiter(rate.Every(6*time.Minute), 3)
+	createLimiter   := middleware.NewUserRateLimiter(rate.Every(6*time.Minute), 3)
 	// 30/hour per user
-	statusLimiter := middleware.NewUserRateLimiter(rate.Every(2*time.Minute), 1)
+	statusLimiter   := middleware.NewUserRateLimiter(rate.Every(2*time.Minute), 1)
 	// 30/hour per user per job (applied at route level)
-	previewLimiter := middleware.NewUserRateLimiter(rate.Every(2*time.Minute), 1)
+	previewLimiter  := middleware.NewUserRateLimiter(rate.Every(2*time.Minute), 1)
+	// 20/hour per user for autofill
+	autofillLimiter := middleware.NewUserRateLimiter(rate.Every(3*time.Minute), 5)
+	// 10/hour per user for extension extraction
+	extractLimiter  := middleware.NewUserRateLimiter(rate.Every(6*time.Minute), 2)
 
 	r.Route("/jobs", func(r chi.Router) {
 		r.Use(middleware.RequireAuth(cfg))
@@ -25,11 +29,16 @@ func RegisterRoutes(r chi.Router, h *Handler, cfg *config.Config, aiGate func(ht
 		r.Get("/", h.List)
 		r.With(createLimiter.Middleware(), aiGate).Post("/", h.Create)
 
+		// Extension-specific endpoints (no job ID in path)
+		r.With(extractLimiter.Middleware(), aiGate).Post("/extract-from-extension", h.ExtractFromExtension)
+		r.Post("/confirm-from-extension", h.ConfirmFromExtension)
+
 		r.Route("/{id}", func(r chi.Router) {
 			r.Get("/", h.GetByID)
 			r.With(statusLimiter.Middleware()).Patch("/status", h.UpdateStatus)
 			r.With(previewLimiter.Middleware()).Get("/resume-preview", h.ResumePreview)
 			r.Delete("/", h.Delete)
+			r.With(autofillLimiter.Middleware(), aiGate).Post("/autofill", h.Autofill)
 		})
 	})
 }
