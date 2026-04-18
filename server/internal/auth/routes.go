@@ -12,9 +12,10 @@ import (
 
 func RegisterRoutes(r chi.Router, h *Handler, cfg *config.Config) {
 	// Per-endpoint rate limiters (stricter than global)
-	signupLimiter := middleware.NewRateLimiter(rate.Every(3*time.Minute), 5)    // 5 per 15 min
-	verifyLimiter := middleware.NewRateLimiter(rate.Every(time.Minute), 10)      // 10 per 10 min
-	loginLimiter  := middleware.NewRateLimiter(rate.Every(3*time.Minute), 5)    // 5 per 15 min
+	signupLimiter    := middleware.NewRateLimiter(rate.Every(3*time.Minute), 5)   // 5 per 15 min
+	verifyLimiter    := middleware.NewRateLimiter(rate.Every(time.Minute), 10)    // 10 per 10 min
+	loginLimiter     := middleware.NewRateLimiter(rate.Every(3*time.Minute), 5)   // 5 per 15 min
+	extTokenLimiter  := middleware.NewRateLimiter(rate.Every(time.Minute), 10)    // 10 per min (pre-auth surface)
 
 	r.Route("/auth", func(r chi.Router) {
 		r.With(signupLimiter.Middleware()).Post("/signup", h.Signup)
@@ -22,11 +23,15 @@ func RegisterRoutes(r chi.Router, h *Handler, cfg *config.Config) {
 		r.With(loginLimiter.Middleware()).Post("/login", h.Login)
 		r.Post("/refresh", h.Refresh)
 
-		// Protected logout routes
+		// Pre-auth extension token exchange (strict IP-based rate limit)
+		r.With(extTokenLimiter.Middleware()).Post("/extension-token/exchange", h.ExchangeExtensionToken)
+
+		// Protected routes
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireAuth(cfg))
 			r.Post("/logout", h.Logout)
 			r.Post("/logout-all", h.LogoutAll)
+			r.Post("/extension-token", h.GenerateExtensionToken)
 		})
 	})
 }
