@@ -4,11 +4,13 @@ import { motion } from 'framer-motion'
 import { ProfileSection } from '@/components/settings/ProfileSection'
 import { ApiKeySection } from '@/components/settings/ApiKeySection'
 import { EmailChangeSection } from '@/components/settings/EmailChangeSection'
+import { ExtensionSection } from '@/components/settings/ExtensionSection'
 
 const SECTIONS = [
   { id: 'profile', label: 'Profile' },
   { id: 'api-key', label: 'API Key' },
   { id: 'security', label: 'Email & Security' },
+  { id: 'extension', label: 'Extension' },
 ]
 
 export function Settings() {
@@ -67,6 +69,10 @@ export function Settings() {
 
         <section id="security" className="scroll-mt-6">
           <EmailChangeSection />
+        </section>
+
+        <section id="extension" className="scroll-mt-6">
+          <ExtensionSection />
         </section>
       </div>
     </motion.div>
