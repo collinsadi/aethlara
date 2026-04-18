@@ -29,6 +29,10 @@
   - [Backend setup (without Docker)](#backend-setup-without-docker)
   - [Frontend setup](#frontend-setup)
   - [Environment variables](#environment-variables)
+- [Chrome Extension](#chrome-extension)
+  - [What it does](#what-it-does)
+  - [Download and install](#download-and-install)
+  - [Build from source](#build-from-source)
 - [API Documentation](#api-documentation)
 - [How It Works](#how-it-works)
 - [Open Source & Self-Hosting](#open-source--self-hosting)
@@ -61,6 +65,7 @@ Aethlara is an open-source, AI-powered job application platform. You upload your
 - **Encrypted API key management** — user API keys stored with AES-256-GCM; decrypted only inside the AI service
 - **Cloudflare R2 file storage** — resumes and generated PDFs, served via short-lived presigned URLs
 - **Light and dark mode** — every component themed via CSS variables
+- **Chrome extension** — one-click job extraction and AI autofill on any application page (see [Chrome Extension](#chrome-extension))
 
 ---
 
@@ -103,6 +108,17 @@ aethlara/
 │   ├── docker-compose.yml
 │   ├── .air.toml             # Hot reload config
 │   └── docs.md               # Full API documentation
+│
+├── extension/                # Chrome extension (Manifest v3, React + Vite)
+│   ├── src/
+│   │   ├── background/       # Service worker (auth handshake, message routing)
+│   │   ├── content/          # Content scripts (page scanner, form filler, extractor)
+│   │   ├── popup/            # React popup UI (pages, hooks, components)
+│   │   ├── api/              # API clients (auth, jobs, resumes, autofill)
+│   │   └── lib/              # Shared utilities (storage, queryClient, sanitise)
+│   ├── manifest.json         # Manifest v3 declaration
+│   ├── package.json
+│   └── vite.config.ts
 │
 ├── dashboard.png             # Dashboard preview
 ├── README.md
@@ -182,6 +198,54 @@ The full variable reference lives in [`server/.env.example`](./server/.env.examp
 > ```
 >
 > Changing this value after users have saved API keys will render those stored keys unrecoverable.
+
+---
+
+## Chrome Extension
+
+The `extension/` folder contains the Aethlara Chrome extension — a Manifest v3 add-on that brings job extraction and AI-powered autofill into any tab you're browsing. It's the fastest way to capture roles from job boards (LinkedIn, Indeed, Wellfound, company careers pages) and to fill multi-page application forms (Workday, Greenhouse, Lever, Ashby) without copy-pasting.
+
+### What it does
+
+- **AI autofill** — Open any application form, click Autofill, and the extension fills every detected field using your tailored resume context. Powered by the same OpenRouter pipeline as the dashboard.
+- **One-click job extraction** — Browsing a job posting? Pull out the structured details and see your match score before saving the role to your tracker.
+- **Save-as-you-browse** — Capture interesting roles to your tracker without leaving the page, then come back later to tailor and apply.
+- **Secure handshake auth** — Connects to your Aethlara account via a single-use, 60-second token issued by the dashboard. No passwords or refresh tokens ever live in the extension. Sessions last 15 minutes.
+- **Scoped permissions** — `activeTab` only, host permissions limited to the Aethlara API domain (never `<all_urls>`).
+
+### Download and install
+
+The packaged extension lives at [`client/public/downloadable/aethlara-extension-v1.zip`](./client/public/downloadable/aethlara-extension-v1.zip) and is also available in-app:
+
+1. Open the Aethlara dashboard or landing page and click **Download Extension** (or visit `/extension`).
+2. Unzip the file — you should see a folder containing `manifest.json`, `background/`, `content/`, popup assets, and `icons/`.
+3. Open your browser's extensions page (`chrome://extensions`, `brave://extensions`, `edge://extensions`, or `arc://extensions`).
+4. Enable **Developer mode** (top-right toggle).
+5. Click **Load unpacked** and select the unzipped folder (the one that directly contains `manifest.json`).
+6. Pin the Aethlara icon to your toolbar via the puzzle-piece menu.
+7. Open **Settings → Extension** in your Aethlara dashboard and click **Connect Chrome Extension** to complete the handshake.
+
+A step-by-step guide with screenshots-style instructions is also available in-app at `/extension/install`.
+
+### Build from source
+
+If you'd rather build the extension yourself (recommended for self-hosted deployments so you can point it at your own API):
+
+```bash
+cd extension
+cp .env.example .env
+# Edit .env:
+#   VITE_API_BASE_URL=https://your-api-domain.com/api/v1
+#   VITE_DASHBOARD_URL=https://your-dashboard-domain.com
+npm install
+npm run build
+```
+
+The build output lives in `extension/dist/`. Load that folder as an unpacked extension via the steps above.
+
+> **Note.** The bundled `aethlara-extension-v1.zip` is built against the hosted Aethlara API. Self-hosters should rebuild from source so the extension talks to their own server.
+
+For the full extension reference (permissions, limitations, internal architecture), see [`extension/README.md`](./extension/README.md).
 
 ---
 

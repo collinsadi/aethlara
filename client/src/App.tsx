@@ -23,6 +23,10 @@ import { NewJob } from "@/pages/NewJob";
 import { JobDetail } from "@/pages/JobDetail";
 import { Tracker } from "@/pages/Tracker";
 import { Settings } from "@/pages/Settings";
+import { ExtensionHandshake } from "@/pages/ExtensionHandshake";
+import { Extension } from "@/pages/Extension";
+import { ExtensionInstall } from "@/pages/ExtensionInstall";
+import { ResumeMismatch } from "@/pages/ResumeMismatch";
 
 export default function App() {
   return (
@@ -39,6 +43,9 @@ export default function App() {
                 <Route path="/contact" element={<Contact />} />
                 <Route path="/privacy" element={<Privacy />} />
                 <Route path="/terms" element={<Terms />} />
+                <Route path="/extension" element={<Extension />} />
+                <Route path="/extension/install" element={<ExtensionInstall />} />
+                <Route path="/help/resume-mismatch" element={<ResumeMismatch />} />
               </Route>
 
               {/* Auth — redirect to dashboard if already logged in */}
@@ -75,6 +82,9 @@ export default function App() {
                 <Route path="/tracker" element={<Tracker />} />
                 <Route path="/settings" element={<Settings />} />
               </Route>
+
+              {/* Extension handshake relay — public, no auth required */}
+              <Route path="/extension-handshake" element={<ExtensionHandshake />} />
 
               {/* Fallback */}
               <Route path="*" element={<Navigate to="/" replace />} />

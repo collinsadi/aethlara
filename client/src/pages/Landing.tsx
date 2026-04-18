@@ -1,6 +1,14 @@
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ArrowRight, GitFork, Star, Shield, Terminal } from "lucide-react";
+import {
+  ArrowRight,
+  GitFork,
+  Star,
+  Shield,
+  Terminal,
+  Puzzle,
+  Sparkles,
+} from "lucide-react";
 
 const trustStatements = [
   { icon: Star, text: "Open source on GitHub" },
@@ -86,19 +94,32 @@ export function Landing() {
               <ArrowRight className="w-4 h-4" />
             </motion.span>
           </Link>
-          <a
-            href="https://github.com/collinsadi/aethlara"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
+          <Link to="/extension">
             <motion.span
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
               className="btn-tf-secondary animate-btn-shine inline-flex items-center gap-2"
             >
-              View on GitHub
+              <Puzzle className="w-4 h-4" />
+              Download Extension
             </motion.span>
-          </a>
+          </Link>
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.5 }}
+          className="mt-6"
+        >
+          <Link
+            to="/extension"
+            className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-brand" />
+            New: Chrome extension with one-click autofill
+            <ArrowRight className="w-3.5 h-3.5" />
+          </Link>
         </motion.div>
       </section>
 

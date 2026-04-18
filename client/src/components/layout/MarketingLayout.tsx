@@ -8,12 +8,14 @@ import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 const navLinks = [
   { label: "Home", href: "/" },
   { label: "About", href: "/about" },
+  { label: "Extension", href: "/extension" },
   { label: "Contact", href: "/contact" },
 ];
 
 const footerLinks = [
   { label: "Home", href: "/" },
   { label: "About", href: "/about" },
+  { label: "Extension", href: "/extension" },
   { label: "Contact", href: "/contact" },
   { label: "Privacy Policy", href: "/privacy" },
   { label: "Terms of Service", href: "/terms" },
