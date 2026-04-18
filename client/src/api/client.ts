@@ -117,27 +117,61 @@ apiClient.interceptors.response.use(
 );
 
 // ── Error normalisation ──────────────────────────────────────────────
+//
+// CRITICAL: this function MUST preserve the full `error.data` payload from
+// the server, verbatim. Downstream features (mismatch modal, API-key CTA,
+// rate limit toasts) rely on structured data and type guards in
+// `@/lib/apiError`. Never flatten a server error into a plain `Error` — a
+// lost `data` field breaks the mismatch modal silently.
 function normalizeError(error: AxiosError<ApiErrorResponse>): ApiError {
   const requestId =
-    (error.config?.headers?.["X-Request-ID"] as string) ?? undefined;
+    (error.response?.headers?.["x-request-id"] as string | undefined) ??
+    (error.config?.headers?.["X-Request-ID"] as string) ??
+    undefined;
 
-  if (error.response?.data?.error) {
+  const serverErr = error.response?.data?.error;
+
+  if (serverErr) {
+    const retryAfterHeader = error.response?.headers?.["retry-after"];
+    const retryAfter =
+      typeof retryAfterHeader === "string" && retryAfterHeader
+        ? parseInt(retryAfterHeader, 10)
+        : undefined;
+
     return {
-      code: error.response.data.error.code,
-      message: error.response.data.error.message,
-      status: error.response.status,
+      code: serverErr.code,
+      message: serverErr.message,
+      status: error.response?.status ?? 0,
+      data: serverErr.data ?? null,
       requestId,
+      ...(Number.isFinite(retryAfter) ? { retryAfter } : {}),
     };
   }
 
   if (error.response?.status === 429) {
     const retryAfter = error.response.headers["retry-after"];
+    const retryAfterNum =
+      typeof retryAfter === "string" && retryAfter
+        ? parseInt(retryAfter, 10)
+        : undefined;
     return {
       code: "RATE_LIMITED",
       message: retryAfter
         ? `Too many requests. Please wait ${retryAfter} seconds.`
         : "Too many requests. Please wait a moment and try again.",
       status: 429,
+      data: null,
+      requestId,
+      ...(Number.isFinite(retryAfterNum) ? { retryAfter: retryAfterNum } : {}),
+    };
+  }
+
+  if (error.code === "ECONNABORTED" || error.message === "Network Error") {
+    return {
+      code: "NETWORK_ERROR",
+      message: "Unable to reach the server. Please check your connection.",
+      status: 0,
+      data: null,
       requestId,
     };
   }
@@ -147,6 +181,7 @@ function normalizeError(error: AxiosError<ApiErrorResponse>): ApiError {
       code: "NETWORK_ERROR",
       message: "Unable to reach the server. Please check your connection.",
       status: 0,
+      data: null,
       requestId,
     };
   }
@@ -155,6 +190,7 @@ function normalizeError(error: AxiosError<ApiErrorResponse>): ApiError {
     code: "UNKNOWN_ERROR",
     message: "An unexpected error occurred. Please try again.",
     status: error.response?.status ?? 0,
+    data: null,
     requestId,
   };
 }

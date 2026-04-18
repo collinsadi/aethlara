@@ -249,14 +249,44 @@ export interface ApiErrorResponse {
   error: {
     code: string;
     message: string;
+    /**
+     * Structured error payload. The shape is error-code specific (e.g.
+     * for `RESUME_MISALIGNED` this carries match_score, gaps, breakdown,
+     * …). Callers should narrow via the typed guards in `@/lib/apiError`.
+     */
+    data?: Record<string, unknown> | null;
   };
 }
 
+/**
+ * Normalised error returned by the axios response interceptor. The
+ * interceptor MUST preserve `data` verbatim from the server payload —
+ * flattening it into `message` breaks the mismatch modal and any other
+ * feature that relies on structured error data.
+ */
 export interface ApiError {
   code: string;
   message: string;
   status: number;
   requestId?: string;
+  /** Structured payload as received from the server. */
+  data?: Record<string, unknown> | null;
+  /** Retry-After header value in seconds, for 429 responses. */
+  retryAfter?: number | null;
+}
+
+// ─── Mismatch payload (RESUME_MISALIGNED / 422) ─────────────────────────────
+
+export interface MismatchErrorData {
+  job_id: string;
+  job_title: string;
+  company: string;
+  match_score: number;
+  match_breakdown: MatchBreakdown | null;
+  reason: string;
+  gaps: string[];
+  suggestion: string;
+  learn_more_url?: string;
 }
 
 export interface TokenPairResponse {
