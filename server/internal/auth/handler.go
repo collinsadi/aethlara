@@ -223,6 +223,66 @@ func (h *Handler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 	response.Success(w, http.StatusOK, nil, "All sessions logged out successfully.")
 }
 
+// POST /auth/extension-token
+func (h *Handler) GenerateExtensionToken(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, response.CodeUnauthorized, "Authentication required.")
+		return
+	}
+
+	origin := r.Header.Get("Origin")
+
+	result, err := h.svc.GenerateExtensionToken(r.Context(), userID, origin)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrExtensionRateLimited):
+			response.Error(w, http.StatusTooManyRequests, response.CodeRateLimited,
+				"Too many extension tokens generated. Try again later.")
+		default:
+			response.Error(w, http.StatusInternalServerError, response.CodeInternalError,
+				"An unexpected error occurred.")
+		}
+		return
+	}
+
+	response.Success(w, http.StatusCreated, map[string]any{
+		"token":      result.Token,
+		"expires_in": result.ExpiresIn,
+	}, "")
+}
+
+// POST /auth/extension-token/exchange
+func (h *Handler) ExchangeExtensionToken(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ExtToken string `json:"ext_token"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	if body.ExtToken == "" {
+		response.Error(w, http.StatusBadRequest, response.CodeInvalidInput, "ext_token is required.")
+		return
+	}
+
+	result, err := h.svc.ExchangeExtensionToken(r.Context(), body.ExtToken)
+	if err != nil {
+		// Generic response — no detail about what failed
+		response.Error(w, http.StatusUnauthorized, response.CodeUnauthorized, "Invalid or expired token.")
+		return
+	}
+
+	response.Success(w, http.StatusOK, map[string]any{
+		"access_token": result.AccessToken,
+		"expires_at":   result.ExpiresAt,
+		"user": map[string]any{
+			"id":        result.User.ID,
+			"full_name": result.User.FullName,
+			"email":     result.User.Email,
+		},
+	}, "")
+}
+
 // ---- helpers ----
 
 type tokenResponseData struct {
