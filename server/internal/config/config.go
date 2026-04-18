@@ -82,6 +82,11 @@ type Config struct {
 	// Pagination
 	DefaultPageSize int
 	MaxPageSize     int
+
+	// Chrome extension auth
+	ExtensionTokenExpirySecs    int // handshake token validity (default 60)
+	ExtensionTokenRatePerHour   int // max handshake tokens per user per hour (default 5)
+	DashboardURL                string
 }
 
 func Load() (*Config, error) {
@@ -169,7 +174,10 @@ func Load() (*Config, error) {
 		AllowedScrapeSchemes:         splitTrimmed(optional("ALLOWED_SCRAPE_SCHEMES", "https")),
 
 		JobMaxTextInputBytes: int64(parseInt("JOB_MAX_TEXT_INPUT_BYTES", 51200)),
-		JobAITimeoutSeconds:  parseInt("JOB_AI_TIMEOUT_SECONDS", 60),
+		// 120s covers the worst case of two sequential AI calls (job
+		// extraction + resume alignment) including a retry. The AI context
+		// is decoupled from the HTTP request so this is the hard ceiling.
+		JobAITimeoutSeconds: parseInt("JOB_AI_TIMEOUT_SECONDS", 120),
 		JobPDFMaxRetries:     parseInt("JOB_PDF_MAX_RETRIES", 3),
 
 		PDFStoragePrefix: optional("PDF_STORAGE_PREFIX", "jobs/resumes/"),
@@ -177,6 +185,10 @@ func Load() (*Config, error) {
 
 		DefaultPageSize: parseInt("DEFAULT_PAGE_SIZE", 20),
 		MaxPageSize:     parseInt("MAX_PAGE_SIZE", 100),
+
+		ExtensionTokenExpirySecs:  parseInt("EXTENSION_TOKEN_EXPIRY_SECS", 60),
+		ExtensionTokenRatePerHour: parseInt("EXTENSION_TOKEN_RATE_PER_HOUR", 5),
+		DashboardURL:              optional("DASHBOARD_URL", "http://localhost:3000"),
 	}
 
 	originsStr := optional("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
