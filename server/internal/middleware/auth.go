@@ -6,12 +6,15 @@ import (
 	"strings"
 
 	"github.com/collinsadi/aethlara/internal/config"
+	"github.com/collinsadi/aethlara/internal/logger"
 	"github.com/collinsadi/aethlara/pkg/response"
 	"github.com/collinsadi/aethlara/pkg/tokenutil"
 )
 
-const userIDKey contextKey = "user_id"
-
+// RequireAuth verifies a Bearer access token, stashes the user's UUID on
+// the request context under logger.UserIDKey, and then invokes next. The
+// decoded claims are intentionally NOT exposed beyond the user ID to
+// minimise accidental leakage into log lines.
 func RequireAuth(cfg *config.Config) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -28,13 +31,16 @@ func RequireAuth(cfg *config.Config) func(http.Handler) http.Handler {
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), userIDKey, claims.UserID)
+			ctx := context.WithValue(r.Context(), logger.UserIDKey, claims.UserID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
+// UserIDFromContext returns the authenticated user's UUID from ctx along
+// with an ok flag. Kept for call-site compatibility with handlers that
+// predate the logger package.
 func UserIDFromContext(ctx context.Context) (string, bool) {
-	id, ok := ctx.Value(userIDKey).(string)
-	return id, ok
+	id := logger.UserIDFromContext(ctx)
+	return id, id != ""
 }
