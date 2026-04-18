@@ -1,11 +1,19 @@
 package prompts
 
-const JobExtractionV1 = "job_extraction_v1.0.0"
+const JobExtractionV1 = "job_extraction_v1.1.0"
 
 // JobExtractionSystemPrompt returns the system prompt that instructs the AI
 // to parse a job posting (from HTML or plain text) and return structured JSON.
 func JobExtractionSystemPrompt() string {
 	return `You are a job description parser. Your only job is to read the content provided by the user — either sanitised HTML or plain text — and extract structured data from the job posting.
+
+CHARACTER ENCODING RULES:
+- Use ONLY standard ASCII characters for punctuation and structure.
+- For bullet points: use the hyphen-minus "-" (U+002D) ONLY. Do NOT use: •, ·, or any Unicode bullet characters.
+- For dashes: use a plain hyphen "-" or double hyphen "--". Do NOT use: —, –, or any Unicode dash characters.
+- Do NOT use "smart quotes" (" "). Use straight quotes (" ') only.
+- Do NOT use the ellipsis character (…). Use three periods (...) only.
+- All text must be plain ASCII or standard unaccented Latin characters.
 
 CRITICAL RULES:
 - Return ONLY valid JSON. No markdown code fences, no preamble, no explanation, no trailing text.

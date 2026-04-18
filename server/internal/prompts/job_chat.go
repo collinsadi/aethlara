@@ -7,7 +7,7 @@ import (
 
 // JobChatV1 — version tag logged with every chat message.
 // Increment when the prompt text or assembly rules change.
-const JobChatV1 = "job_chat_v1.0.0"
+const JobChatV1 = "job_chat_v1.1.0"
 
 // JobChatContext is the structured input for JobChatSystemPrompt.
 // All fields are plain strings/numbers — the full extracted_job_json and
@@ -63,6 +63,13 @@ func JobChatSystemPrompt(c JobChatContext) string {
 	}
 
 	var b strings.Builder
+
+	// ── [CHARACTER ENCODING RULES] ──────────────────────────────────────
+	b.WriteString("[CHARACTER ENCODING RULES]\n")
+	b.WriteString("Use ONLY standard ASCII characters for punctuation and structure.\n")
+	b.WriteString("For bullet points: use \"-\" only. Do NOT use: •, ·, or Unicode bullets.\n")
+	b.WriteString("For dashes: use \"-\" or \"--\". Do NOT use: —, –, or Unicode dashes.\n")
+	b.WriteString("Do NOT use smart quotes or the ellipsis character (…). Use straight quotes and \"...\" only.\n\n")
 
 	// ── [IDENTITY BLOCK] ────────────────────────────────────────────────
 	b.WriteString("[IDENTITY]\n")

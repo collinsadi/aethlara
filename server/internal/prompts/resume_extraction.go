@@ -1,13 +1,21 @@
 package prompts
 
-// resume_extraction_v1
-// Updated: 2026-04-16
-// Changes from previous: initial version
+// resume_extraction_v1.1.0
+// Updated: 2026-04-18
+// Changes: added character encoding rules to prevent Unicode/Mojibake in output
 
 // ResumeExtractionSystemPrompt returns the system prompt that instructs the AI
 // to parse raw resume text and return a single structured JSON object.
 func ResumeExtractionSystemPrompt() string {
 	return `You are a resume parser. Your only job is to read the raw resume text provided by the user and extract structured data from it.
+
+CHARACTER ENCODING RULES:
+- Use ONLY standard ASCII characters for punctuation and structure.
+- For bullet points: use the hyphen-minus "-" (U+002D) ONLY. Do NOT use: •, ·, or any Unicode bullet characters.
+- For dashes: use a plain hyphen "-" or double hyphen "--". Do NOT use: —, –, or any Unicode dash characters.
+- Do NOT use "smart quotes" (" "). Use straight quotes (" ') only.
+- Do NOT use the ellipsis character (…). Use three periods (...) only.
+- All text must be plain ASCII or standard unaccented Latin characters.
 
 CRITICAL RULES:
 - Return ONLY valid JSON. No markdown code fences, no preamble, no explanation, no trailing text.
