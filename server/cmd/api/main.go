@@ -22,6 +22,7 @@ import (
 	"github.com/collinsadi/aethlara/internal/database"
 	"github.com/collinsadi/aethlara/internal/email"
 	"github.com/collinsadi/aethlara/internal/job"
+	"github.com/collinsadi/aethlara/internal/logger"
 	"github.com/collinsadi/aethlara/internal/middleware"
 	"github.com/collinsadi/aethlara/internal/resume"
 	"github.com/collinsadi/aethlara/internal/settings"
@@ -32,15 +33,19 @@ import (
 const version = "1.0.0"
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})))
+	// Bootstrap the default logger with a conservative production-style
+	// configuration so config-load errors are still emitted as JSON. Once
+	// APP_ENV is known we replace it with an env-aware logger that also
+	// redacts known sensitive fields as a defence-in-depth measure.
+	slog.SetDefault(logger.New("production"))
 
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("config load failed", "error", err)
 		os.Exit(1)
 	}
+
+	slog.SetDefault(logger.New(cfg.AppEnv))
 
 	db, err := database.Connect(cfg.DatabaseURL)
 	if err != nil {
