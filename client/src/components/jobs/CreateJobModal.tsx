@@ -15,20 +15,29 @@ import {
   X, Link2, FileText, ChevronRight, CheckCircle2,
   AlertCircle, Loader2, ArrowLeft,
 } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useResumes } from '@/hooks/useResumes'
 import { useCreateJob } from '@/hooks/useJobs'
 import { useJobDetail } from '@/hooks/useJobs'
 import { useAIGate } from '@/hooks/useAIGate'
 import { ApiKeyStatusBanner } from '@/components/settings/ApiKeyStatusBanner'
+import { MismatchModal, type MismatchData } from '@/components/jobs/MismatchModal'
 import { urlJobSchema, textJobSchema } from '@/lib/validators/job.schema'
 import type { ApiJob } from '@/lib/types'
+import { apiErrorMessage, extractMismatchData, isApiError } from '@/lib/apiError'
+import { queryKeys } from '@/lib/queryKeys'
 import { cn } from '@/lib/utils'
 
+// CreateStep explicitly models `mismatch` as its own state so the modal
+// renders the rich MismatchModal instead of falling through to the generic
+// error screen. The previous step machine swallowed mismatch errors
+// whenever the interceptor stripped the structured `data` payload.
 type CreateStep =
   | 'input_method'
   | 'provide_job'
   | 'select_resume'
   | 'processing'
+  | 'mismatch'
   | 'result'
 
 interface Props {
@@ -41,10 +50,12 @@ const MAX_TEXT_BYTES = 50_000
 
 export function CreateJobModal({ open, onClose, onSuccess }: Props) {
   const { hasKey, isLoading: gateLoading } = useAIGate()
+  const qc = useQueryClient()
   const [step, setStep] = useState<CreateStep>('input_method')
   const [inputMethod, setInputMethod] = useState<'url' | 'text'>('url')
   const [createdJob, setCreatedJob] = useState<ApiJob | null>(null)
-  const [error, setError] = useState<{ code: string; message: string; match_score?: number } | null>(null)
+  const [error, setError] = useState<{ code: string; message: string } | null>(null)
+  const [mismatchData, setMismatchData] = useState<MismatchData | null>(null)
   const [resumeId, setResumeId] = useState('')
   const [pollEnabled, setPollEnabled] = useState(false)
 
@@ -110,6 +121,7 @@ export function CreateJobModal({ open, onClose, onSuccess }: Props) {
     setInputMethod('url')
     setCreatedJob(null)
     setError(null)
+    setMismatchData(null)
     setResumeId('')
     setPollEnabled(false)
     urlForm.reset()
@@ -160,16 +172,44 @@ export function CreateJobModal({ open, onClose, onSuccess }: Props) {
         setPollEnabled(true)
       }
     } catch (err: unknown) {
-      const apiErr = err as { response?: { data?: { error?: { code?: string; message?: string; match_score?: number } } } }
-      const errBody = apiErr?.response?.data?.error
-      const code = errBody?.code ?? 'UNKNOWN_ERROR'
-      const message = errBody?.message ?? 'Something went wrong.'
-      setError({ code, message, match_score: errBody?.match_score })
+      // The axios interceptor normalises every failure into a structured
+      // `ApiError` with `code`, `message`, and `data` fields. We check for
+      // RESUME_MISALIGNED before any generic handling — the job is already
+      // soft-deleted server-side so we must never fall through to the
+      // generic error screen (that would leave the user confused about
+      // whether anything was saved).
+      const mismatch = extractMismatchData(err)
+      if (mismatch) {
+        setMismatchData(mismatch as MismatchData)
+        setStep('mismatch')
+        return
+      }
+
+      const code = isApiError(err) ? err.code : 'UNKNOWN_ERROR'
+      const message = apiErrorMessage(err)
+      setError({ code, message })
       setStep('result')
     }
   }
 
   if (!open) return null
+
+  if (step === 'mismatch' && mismatchData) {
+    return (
+      <MismatchModal
+        data={mismatchData}
+        onClose={() => {
+          // The mismatch path soft-deleted the job server-side; refresh
+          // any list/analytics view so stale entries disappear.
+          qc.invalidateQueries({ queryKey: queryKeys.jobs.lists() })
+          qc.invalidateQueries({ queryKey: queryKeys.analytics.dashboard() })
+          setMismatchData(null)
+          reset()
+          onClose()
+        }}
+      />
+    )
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -626,10 +666,6 @@ const ERROR_MESSAGES: Record<string, { title: string; desc: string }> = {
     title: "Job description seems incomplete",
     desc: "The job description seems incomplete. Try pasting more of the page text.",
   },
-  RESUME_MISALIGNED: {
-    title: "Low alignment",
-    desc: "Your resume and this job are quite different. You can still save it to track.",
-  },
   DUPLICATE_JOB: {
     title: "Already added",
     desc: "You've already added a job from this URL in the last 24 hours.",
@@ -649,7 +685,7 @@ function StepResult({
   onRetryWithText,
 }: {
   job: ApiJob | null
-  error: { code: string; message: string; match_score?: number } | null
+  error: { code: string; message: string } | null
   inputMethod: 'url' | 'text'
   onAddAnother: () => void
   onViewJob: () => void
@@ -657,7 +693,6 @@ function StepResult({
 }) {
   if (error) {
     const known = ERROR_MESSAGES[error.code]
-    const isMisaligned = error.code === 'RESUME_MISALIGNED'
     const needsTextSwitch = ['INVALID_JOB_INPUT', 'SCRAPE_FAILED'].includes(error.code) && inputMethod === 'url'
 
     return (
@@ -666,33 +701,16 @@ function StepResult({
         animate={{ opacity: 1, y: 0 }}
         className="text-center py-4 space-y-4"
       >
-        <AlertCircle className={cn('w-12 h-12 mx-auto', isMisaligned ? 'text-amber-500' : 'text-red-500')} />
+        <AlertCircle className="w-12 h-12 mx-auto text-red-500" />
         <div>
           <p className="text-base font-semibold text-foreground font-heading">
             {known?.title ?? 'Something went wrong'}
           </p>
-          {isMisaligned && error.match_score != null && (
-            <p className="text-3xl font-bold text-amber-500 font-heading mt-2">
-              {error.match_score}%
-            </p>
-          )}
-          <p className={cn(
-            'text-sm text-muted-foreground mt-1.5',
-            isMisaligned && 'text-left max-h-48 overflow-y-auto'
-          )}>
-            {isMisaligned ? error.message : (known?.desc ?? error.message)}
+          <p className="text-sm text-muted-foreground mt-1.5">
+            {known?.desc ?? error.message}
           </p>
         </div>
         <div className="flex flex-col gap-2">
-          {isMisaligned && job && (
-            <button
-              type="button"
-              onClick={onViewJob}
-              className="btn-tf animate-btn-shine w-full text-sm font-semibold py-2.5"
-            >
-              Save anyway
-            </button>
-          )}
           {needsTextSwitch && (
             <button
               type="button"
