@@ -1,7 +1,7 @@
 // Package apikey is the single place in the codebase responsible for
-// encrypting and decrypting user API keys.  Nothing outside this package
-// ever sees a plaintext key except internal/ai/openrouter.go, which calls
-// Decrypt exactly once per request.
+// encrypting and decrypting user API keys (OpenRouter and Anthropic).
+// Plaintext keys only leave this package through settings.Service, which
+// hands them to internal/ai for exactly one provider call at a time.
 package apikey
 
 import (
@@ -55,7 +55,8 @@ func (s *Service) Encrypt(plaintext string) (string, error) {
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
-// Decrypt reverses Encrypt. Called only from internal/ai/openrouter.go.
+// Decrypt reverses Encrypt. Called only from settings.Service when resolving
+// a credential for a single AI call.
 func (s *Service) Decrypt(blob string) (string, error) {
 	data, err := base64.StdEncoding.DecodeString(blob)
 	if err != nil {
@@ -93,16 +94,26 @@ func (s *Service) ExtractPrefix(plaintext string) string {
 	return string(runes[:s.previewLen])
 }
 
-// ValidateFormat checks that the key looks like an OpenRouter key.
-func (s *Service) ValidateFormat(plaintext string) error {
-	if !strings.HasPrefix(plaintext, "sk-or-") {
-		return fmt.Errorf("%w: must start with 'sk-or-'", ErrInvalidFormat)
+// keyPrefixes maps provider name -> required key prefix.
+var keyPrefixes = map[string]string{
+	"openrouter": "sk-or-",
+	"anthropic":  "sk-ant-",
+}
+
+// ValidateFormat checks that the key looks like a key for provider.
+func (s *Service) ValidateFormat(provider, plaintext string) error {
+	prefix, ok := keyPrefixes[provider]
+	if !ok {
+		return fmt.Errorf("%w: unknown provider %q", ErrInvalidFormat, provider)
+	}
+	if !strings.HasPrefix(plaintext, prefix) {
+		return fmt.Errorf("%w: must start with '%s'", ErrInvalidFormat, prefix)
 	}
 	if len(plaintext) < 20 {
 		return fmt.Errorf("%w: too short (minimum 20 characters)", ErrInvalidFormat)
 	}
-	if len(plaintext) > 200 {
-		return fmt.Errorf("%w: too long (maximum 200 characters)", ErrInvalidFormat)
+	if len(plaintext) > 256 {
+		return fmt.Errorf("%w: too long (maximum 256 characters)", ErrInvalidFormat)
 	}
 	for _, r := range plaintext {
 		if unicode.IsSpace(r) || r == 0 {

@@ -8,7 +8,7 @@ import (
 )
 
 func RegisterRoutes(r chi.Router, h *Handler, cfg *config.Config) {
-	apiKeyLimiter  := middleware.NewRateLimiter(middleware.APILimits)
+	apiKeyLimiter := middleware.NewRateLimiter(middleware.APILimits)
 	profileLimiter := middleware.NewRateLimiter(middleware.APILimits)
 	emailReqLimiter := middleware.NewRateLimiter(middleware.AuthLimits)
 	emailConfLimiter := middleware.NewRateLimiter(middleware.OTPLimits)
@@ -18,8 +18,12 @@ func RegisterRoutes(r chi.Router, h *Handler, cfg *config.Config) {
 
 		r.With(apiKeyLimiter.Middleware).Post("/api-key", h.SaveAPIKey)
 		r.Get("/api-key", h.GetAPIKey)
+		r.Get("/api-keys", h.ListAPIKeys)
 		r.With(apiKeyLimiter.Middleware).Delete("/api-key", h.DeleteAPIKey)
 		r.With(apiKeyLimiter.Middleware).Post("/api-key/validate", h.ValidateAPIKey)
+
+		r.Get("/ai", h.GetAISettings)
+		r.With(apiKeyLimiter.Middleware).Put("/ai", h.UpdateAISettings)
 
 		r.With(profileLimiter.Middleware).Patch("/profile", h.UpdateProfile)
 

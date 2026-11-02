@@ -36,14 +36,29 @@ type EmailChangeRequest struct {
 	CreatedAt time.Time
 }
 
+// AIPreferences is the raw ai_preferences row. Empty model strings mean
+// "use the server default for this provider".
+type AIPreferences struct {
+	UserID     string
+	Provider   string
+	SmartModel *string
+	FastModel  *string
+	UpdatedAt  time.Time
+}
+
 type Repository interface {
-	// API key
+	// API keys (one per user per provider)
 	UpsertAPIKey(ctx context.Context, userID, encryptedKey, keyPrefix, provider string, label *string) (*APIKeyRecord, error)
-	GetAPIKeyByUserID(ctx context.Context, userID string) (*APIKeyRecord, error)
-	HasValidAPIKey(ctx context.Context, userID string) (bool, error) // used by AIGate middleware
-	DeleteAPIKey(ctx context.Context, userID string) error
-	UpdateAPIKeyValidation(ctx context.Context, userID, status string, validatedAt time.Time) error
-	UpdateAPIKeyLastUsed(ctx context.Context, userID string, usedAt time.Time) error
+	GetAPIKey(ctx context.Context, userID, provider string) (*APIKeyRecord, error)
+	ListAPIKeys(ctx context.Context, userID string) ([]APIKeyRecord, error)
+	HasValidAPIKey(ctx context.Context, userID string) (bool, error) // used by AIGate middleware; checks the active provider
+	DeleteAPIKey(ctx context.Context, userID, provider string) error
+	UpdateAPIKeyValidation(ctx context.Context, userID, provider, status string, validatedAt time.Time) error
+	UpdateAPIKeyLastUsed(ctx context.Context, userID, provider string, usedAt time.Time) error
+
+	// AI provider / model preferences
+	GetAIPreferences(ctx context.Context, userID string) (*AIPreferences, error)
+	UpsertAIPreferences(ctx context.Context, prefs AIPreferences) error
 
 	// Profile
 	UpdateFullName(ctx context.Context, userID, fullName string) error
@@ -89,14 +104,12 @@ func (r *pgxRepository) UpsertAPIKey(ctx context.Context, userID, encryptedKey, 
 	return &rec, nil
 }
 
-func (r *pgxRepository) GetAPIKeyByUserID(ctx context.Context, userID string) (*APIKeyRecord, error) {
+const apiKeyCols = `id, user_id, encrypted_key, key_prefix, provider, label,
+	last_used_at, last_validated_at, validation_status, created_at, updated_at`
+
+func scanAPIKey(row pgx.Row) (*APIKeyRecord, error) {
 	var rec APIKeyRecord
-	err := r.db.QueryRow(ctx, `
-		SELECT id, user_id, encrypted_key, key_prefix, provider, label,
-		       last_used_at, last_validated_at, validation_status, created_at, updated_at
-		FROM api_keys
-		WHERE user_id = $1 AND provider = 'openrouter'
-	`, userID).Scan(
+	err := row.Scan(
 		&rec.ID, &rec.UserID, &rec.EncryptedKey, &rec.KeyPrefix, &rec.Provider, &rec.Label,
 		&rec.LastUsedAt, &rec.LastValidatedAt, &rec.ValidationStatus,
 		&rec.CreatedAt, &rec.UpdatedAt,
@@ -110,14 +123,51 @@ func (r *pgxRepository) GetAPIKeyByUserID(ctx context.Context, userID string) (*
 	return &rec, nil
 }
 
+func (r *pgxRepository) GetAPIKey(ctx context.Context, userID, provider string) (*APIKeyRecord, error) {
+	return scanAPIKey(r.db.QueryRow(ctx, `
+		SELECT `+apiKeyCols+`
+		FROM api_keys
+		WHERE user_id = $1 AND provider = $2
+	`, userID, provider))
+}
+
+func (r *pgxRepository) ListAPIKeys(ctx context.Context, userID string) ([]APIKeyRecord, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT `+apiKeyCols+`
+		FROM api_keys
+		WHERE user_id = $1
+		ORDER BY provider
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []APIKeyRecord
+	for rows.Next() {
+		rec, err := scanAPIKey(rows)
+		if err != nil {
+			return nil, err
+		}
+		if rec != nil {
+			out = append(out, *rec)
+		}
+	}
+	return out, rows.Err()
+}
+
+// HasValidAPIKey reports whether the user has a usable key for their ACTIVE
+// provider (ai_preferences.provider, defaulting to openrouter).
 func (r *pgxRepository) HasValidAPIKey(ctx context.Context, userID string) (bool, error) {
 	var exists bool
 	err := r.db.QueryRow(ctx, `
 		SELECT EXISTS(
-			SELECT 1 FROM api_keys
-			WHERE user_id = $1
-			  AND provider = 'openrouter'
-			  AND validation_status NOT IN ('revoked', 'invalid')
+			SELECT 1
+			FROM api_keys k
+			LEFT JOIN ai_preferences p ON p.user_id = k.user_id
+			WHERE k.user_id = $1
+			  AND k.provider = COALESCE(p.provider, 'openrouter')
+			  AND k.validation_status NOT IN ('revoked', 'invalid')
 		)
 	`, userID).Scan(&exists)
 	if err != nil {
@@ -126,24 +176,53 @@ func (r *pgxRepository) HasValidAPIKey(ctx context.Context, userID string) (bool
 	return exists, nil
 }
 
-func (r *pgxRepository) DeleteAPIKey(ctx context.Context, userID string) error {
-	_, err := r.db.Exec(ctx, `DELETE FROM api_keys WHERE user_id = $1 AND provider = 'openrouter'`, userID)
+func (r *pgxRepository) DeleteAPIKey(ctx context.Context, userID, provider string) error {
+	_, err := r.db.Exec(ctx, `DELETE FROM api_keys WHERE user_id = $1 AND provider = $2`, userID, provider)
 	return err
 }
 
-func (r *pgxRepository) UpdateAPIKeyValidation(ctx context.Context, userID, status string, validatedAt time.Time) error {
+func (r *pgxRepository) UpdateAPIKeyValidation(ctx context.Context, userID, provider, status string, validatedAt time.Time) error {
 	_, err := r.db.Exec(ctx, `
-		UPDATE api_keys SET validation_status = $2, last_validated_at = $3, updated_at = NOW()
-		WHERE user_id = $1 AND provider = 'openrouter'
-	`, userID, status, validatedAt)
+		UPDATE api_keys SET validation_status = $3, last_validated_at = $4, updated_at = NOW()
+		WHERE user_id = $1 AND provider = $2
+	`, userID, provider, status, validatedAt)
 	return err
 }
 
-func (r *pgxRepository) UpdateAPIKeyLastUsed(ctx context.Context, userID string, usedAt time.Time) error {
+func (r *pgxRepository) UpdateAPIKeyLastUsed(ctx context.Context, userID, provider string, usedAt time.Time) error {
 	_, err := r.db.Exec(ctx, `
-		UPDATE api_keys SET last_used_at = $2, updated_at = NOW()
-		WHERE user_id = $1 AND provider = 'openrouter'
-	`, userID, usedAt)
+		UPDATE api_keys SET last_used_at = $3, updated_at = NOW()
+		WHERE user_id = $1 AND provider = $2
+	`, userID, provider, usedAt)
+	return err
+}
+
+func (r *pgxRepository) GetAIPreferences(ctx context.Context, userID string) (*AIPreferences, error) {
+	var p AIPreferences
+	err := r.db.QueryRow(ctx, `
+		SELECT user_id, provider, smart_model, fast_model, updated_at
+		FROM ai_preferences
+		WHERE user_id = $1
+	`, userID).Scan(&p.UserID, &p.Provider, &p.SmartModel, &p.FastModel, &p.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (r *pgxRepository) UpsertAIPreferences(ctx context.Context, p AIPreferences) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO ai_preferences (user_id, provider, smart_model, fast_model, updated_at)
+		VALUES ($1, $2, $3, $4, NOW())
+		ON CONFLICT (user_id) DO UPDATE SET
+			provider    = EXCLUDED.provider,
+			smart_model = EXCLUDED.smart_model,
+			fast_model  = EXCLUDED.fast_model,
+			updated_at  = NOW()
+	`, p.UserID, p.Provider, p.SmartModel, p.FastModel)
 	return err
 }
 

@@ -140,6 +140,8 @@ func (s *service) processExtraction(ctx context.Context, userID, resumeID string
 		SystemPrompt:  prompts.ResumeExtractionSystemPrompt(),
 		UserMessage:   text,
 		PromptVersion: prompts.ResumeExtractionV1,
+		Stage:         ai.StageResumeExtraction,
+		JSON:          true,
 	})
 	if err != nil {
 		return "", fmt.Errorf("ai extraction: %w", err)

@@ -79,9 +79,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	// NOTE: ai.NewClient intentionally takes no fallback API key. Every request
-	// resolves a per-user key via the APIKeyProvider wired below.
-	aiClient := ai.NewClient(cfg.OpenRouterBaseURL, cfg.OpenRouterModel)
+	// NOTE: ai.NewClient intentionally takes no API key for any provider.
+	// Every request resolves a per-user credential via the
+	// CredentialProvider wired below.
+	aiClient := ai.NewClient(ai.Config{
+		OpenRouterBaseURL:   cfg.OpenRouterBaseURL,
+		OpenRouterModel:     cfg.OpenRouterModel,
+		OpenRouterFastModel: cfg.OpenRouterFastModel,
+		AnthropicBaseURL:    cfg.AnthropicBaseURL,
+		AnthropicModel:      cfg.AnthropicModel,
+		AnthropicFastModel:  cfg.AnthropicFastModel,
+	})
 
 	apiKeySvc, err := apikey.New(cfg.APIKeyEncryptionKey(), cfg.APIKeyPreviewLength)
 	if err != nil {
@@ -107,8 +115,9 @@ func main() {
 	settingsSvc := settings.NewService(settingsRepo, userRepo, apiKeySvc, aiClient, emailClient, cfg)
 	chatSvc := chat.NewService(chatRepo, aiClient, cfg)
 
-	// Wire per-user key provider into the AI client after settings service is ready.
-	aiClient.SetKeyProvider(settingsSvc)
+	// Wire per-user credential provider into the AI client after the settings
+	// service is ready.
+	aiClient.SetCredentialProvider(settingsSvc)
 
 	// Handlers
 	authHandler := auth.NewHandler(authSvc)

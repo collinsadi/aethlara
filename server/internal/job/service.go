@@ -365,6 +365,8 @@ func (s *service) runExtraction(ctx context.Context, userID, jobID, rawContent s
 		UserMessage:   rawContent,
 		PromptVersion: prompts.JobExtractionV1,
 		Stage:         ai.StageJobExtraction,
+		Tier:          ai.TierFast,
+		JSON:          true,
 	})
 	if err != nil {
 		mapped := mapAIError(err)
@@ -454,6 +456,7 @@ func (s *service) runAlignment(ctx context.Context, userID, jobID string, extrac
 		UserMessage:   userMsg,
 		PromptVersion: prompts.ResumeAlignmentV1,
 		Stage:         ai.StageResumeAlignment,
+		JSON:          true,
 	})
 	if err != nil {
 		mapped := mapAIError(err)
@@ -855,6 +858,7 @@ func (s *service) Autofill(ctx context.Context, jobID, userID string, req Autofi
 		UserMessage:   userMsg,
 		PromptVersion: prompts.AutofillV1,
 		Stage:         ai.StageAutofill,
+		JSON:          true,
 	})
 	if err != nil {
 		if mapped := mapAIError(err); errors.Is(mapped, ErrAIPipelineTimeout) || errors.Is(mapped, ai.ErrNoAPIKey) {
@@ -896,7 +900,7 @@ func (s *service) Autofill(ctx context.Context, jobID, userID string, req Autofi
 		Fills:         fills,
 		Confidence:    confidence,
 		UnfilledCount: unfilledCount,
-		ModelUsed:     s.cfg.OpenRouterModel,
+		ModelUsed:     aiResp.Model,
 	}, nil
 }
 
@@ -967,6 +971,8 @@ func (s *service) ExtractFromExtension(ctx context.Context, userID string, req E
 		UserMessage:   req.PageText,
 		PromptVersion: prompts.JobExtractionV1,
 		Stage:         ai.StageJobExtraction,
+		Tier:          ai.TierFast,
+		JSON:          true,
 	})
 	if err != nil {
 		if errors.Is(err, ai.ErrNoAPIKey) {
@@ -1027,6 +1033,7 @@ func (s *service) ExtractFromExtension(ctx context.Context, userID string, req E
 		UserMessage:   userMsg,
 		PromptVersion: prompts.ResumeAlignmentV1,
 		Stage:         ai.StageResumeAlignment,
+		JSON:          true,
 	})
 	if err != nil {
 		if errors.Is(err, ai.ErrNoAPIKey) {

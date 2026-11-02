@@ -12,8 +12,9 @@ type APIKeyChecker interface {
 	HasValidAPIKey(ctx context.Context, userID string) (bool, error)
 }
 
-// AIGate blocks requests from users who have no valid OpenRouter API key.
-// Apply this to every endpoint that triggers an OpenRouter call.
+// AIGate blocks requests from users who have no valid API key for their
+// active AI provider (OpenRouter or Anthropic). Apply this to every endpoint
+// that triggers an AI call.
 //
 // The gate enforces server-side — the frontend check is UX only.
 func AIGate(checker APIKeyChecker) func(http.Handler) http.Handler {
@@ -33,7 +34,7 @@ func AIGate(checker APIKeyChecker) func(http.Handler) http.Handler {
 			if !hasKey {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusForbidden)
-				_, _ = w.Write([]byte(`{"error":{"code":"API_KEY_REQUIRED","message":"An OpenRouter API key is required to use this feature. Add your key in Settings.","action":{"label":"Add API Key","path":"/settings#api-key"}}}`))
+				_, _ = w.Write(APIKeyRequiredBody)
 				return
 			}
 
@@ -41,3 +42,8 @@ func AIGate(checker APIKeyChecker) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+// APIKeyRequiredBody is the 403 API_KEY_REQUIRED envelope shared by the AI
+// gate and handlers that hit ai.ErrNoAPIKey mid-request. It carries an
+// action so clients can render an inline "Add API Key" CTA.
+var APIKeyRequiredBody = []byte(`{"error":{"code":"API_KEY_REQUIRED","message":"An AI provider API key (Anthropic or OpenRouter) is required to use this feature. Add your key in Settings.","action":{"label":"Add API Key","path":"/settings#ai"}}}`)

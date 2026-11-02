@@ -365,7 +365,7 @@ func (h *Handler) handleServiceError(w http.ResponseWriter, r *http.Request, err
 		// client can render an inline CTA pointing at Settings.
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"error":{"code":"API_KEY_REQUIRED","message":"An OpenRouter API key is required to use this feature. Add your key in Settings.","action":{"label":"Add API Key","path":"/settings#api-key"}}}`))
+		_, _ = w.Write(middleware.APIKeyRequiredBody)
 		return
 	case errors.Is(err, ErrExtraction):
 		var extErr *ExtractionError

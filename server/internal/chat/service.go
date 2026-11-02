@@ -234,6 +234,7 @@ func (s *service) SendMessage(ctx context.Context, userID, sessionID, content st
 		SystemPrompt:  systemPrompt,
 		Messages:      aiMessages,
 		PromptVersion: prompts.JobChatV1,
+		Stage:         ai.StageChat,
 	})
 
 	if aiErr != nil {
