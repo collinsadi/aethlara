@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import {
   ArrowRight,
   GitFork,
+  KeyRound,
   Star,
   Shield,
   Terminal,
@@ -12,6 +13,7 @@ import {
 
 const trustStatements = [
   { icon: Star, text: "Open source on GitHub" },
+  { icon: KeyRound, text: "Your own Anthropic or OpenRouter key" },
   { icon: Shield, text: "No subscription, ever" },
   { icon: GitFork, text: "Self-hostable in minutes" },
 ];
@@ -19,37 +21,50 @@ const trustStatements = [
 const steps = [
   {
     n: "01",
-    title: "Paste a job link or description",
-    body: "Drop in any URL or copy-paste the job text. Aethlara reads it the way a recruiter does.",
+    title: "Tell it what you want, once",
+    body: "Upload your resume and set your titles, locations, salary floor and deal-breakers. That's the whole setup.",
   },
   {
     n: "02",
-    title: "AI tailors your resume",
-    body: "Your uploaded resume is rewritten to match the role, with a 1–100 match score so you know where you stand before you apply.",
+    title: "It finds and scores jobs",
+    body: "Every run searches company boards and job boards, then scores each posting against your resume — 0 to 100, with strengths and gaps.",
   },
   {
     n: "03",
-    title: "Track every application",
-    body: "Move applications through your Kanban board from first contact to offer — no spreadsheet required.",
+    title: "You approve, it applies",
+    body: "Approve the good ones in seconds. The next run emails your tailored resume, or the Chrome extension fills and submits the form.",
+  },
+  {
+    n: "04",
+    title: "Replies, sorted and tracked",
+    body: "Replies land in your agent's own mailbox. AI sorts them and moves your tracker: applied, interview, offer — or rejected.",
   },
 ];
 
 const features = [
   {
-    title: "AI job extraction",
-    body: "Paste a URL or raw description. Aethlara pulls out the role, requirements, and culture signals automatically — nothing to fill in manually.",
+    title: "Searches the boards for you",
+    body: "Greenhouse, Lever and Ashby boards for the companies on your watchlist, plus Remotive, Remote OK, Himalayas, Jobicy and Arbeitnow. With an Anthropic key, Claude searches the web too.",
   },
   {
-    title: "Tailored resume, scored",
-    body: "Every job gets a version of your resume rewritten to fit it. A match score from 1–100 tells you whether it's worth applying at all.",
+    title: "Scored against your resume",
+    body: "Every posting gets a match score with the reasons behind it — and deal-breakers are filtered out — so you only spend time on roles worth it.",
   },
   {
-    title: "Kanban application board",
-    body: "Track every role from applied to offer in a single board. See your full pipeline at a glance without opening a spreadsheet.",
+    title: "You approve. It applies.",
+    body: "Nothing goes out without your OK (unless you opt in to auto-approve strong matches). Email applications are sent from your agent mailbox; forms are filled and submitted by the extension.",
+  },
+  {
+    title: "Tailored resume and cover letter",
+    body: "Each application gets a version of your resume rewritten for the role and a short cover letter. Questions only you can answer, it asks once and remembers.",
+  },
+  {
+    title: "Its own inbox, sorted by AI",
+    body: "Confirmations, rejections, interviews and offers are triaged automatically and update your Kanban tracker. Verification codes are picked up for you.",
   },
   {
     title: "Open source, your key",
-    body: "The full codebase is public on GitHub. Run it yourself or use the hosted version with your own API key — no vendor lock-in.",
+    body: "Bring your own Anthropic or OpenRouter key — there's no platform key and no subscription. Use the hosted version or self-host the whole thing.",
   },
 ];
 
@@ -64,18 +79,18 @@ export function Landing() {
           transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
           className="font-heading font-semibold text-[2.75rem] leading-[1.05] tracking-[-0.03em] text-foreground md:text-6xl lg:text-[4rem] lg:leading-[1.02] mb-7"
         >
-          Your resume, rebuilt{" "}
-          <span className="text-gradient">for every job.</span>
+          Your job search,{" "}
+          <span className="text-gradient">on autopilot.</span>
         </motion.h1>
 
         <motion.p
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.2 }}
-          className="text-muted-foreground text-lg leading-7 max-w-md mx-auto mb-12"
+          className="text-muted-foreground text-lg leading-7 max-w-lg mx-auto mb-12"
         >
-          Paste a job link. Aethlara tailors your resume, scores your fit,
-          and tracks the whole search.
+          Aethlara finds jobs that fit your resume. You approve the good ones;
+          it applies, sorts the replies and keeps your tracker current.
         </motion.p>
 
         <motion.div
@@ -112,21 +127,21 @@ export function Landing() {
           transition={{ duration: 0.5, delay: 0.5 }}
           className="mt-6"
         >
-          <Link
-            to="/extension"
+          <a
+            href="#how-it-works"
             className="inline-flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             <Sparkles className="w-3.5 h-3.5 text-brand" />
-            New: Chrome extension with one-click autofill
+            New: Autopilot — it searches, applies and follows up for you
             <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
+          </a>
         </motion.div>
       </section>
 
       {/* Social proof bar */}
       <section className="border-y border-border bg-muted/40">
         <div className="max-w-5xl mx-auto px-6 py-8">
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-8 sm:gap-16">
+          <div className="flex flex-col sm:flex-row sm:flex-wrap items-center justify-center gap-6 sm:gap-x-12 sm:gap-y-4">
             {trustStatements.map(({ icon: Icon, text }, i) => (
               <motion.div
                 key={text}
@@ -153,12 +168,12 @@ export function Landing() {
           className="mb-14"
         >
           <div className="heading-sub mb-4">How it works</div>
-          <h2 className="font-heading text-3xl md:text-4xl font-semibold tracking-tight text-foreground max-w-md">
-            Three steps. No fluff.
+          <h2 className="font-heading text-3xl md:text-4xl font-semibold tracking-tight text-foreground max-w-xl">
+            Set it up once. It does the rest.
           </h2>
         </motion.div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 md:gap-12">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 lg:gap-10">
           {steps.map((step, i) => (
             <motion.div
               key={step.n}
@@ -169,7 +184,7 @@ export function Landing() {
               className="relative"
             >
               {i < steps.length - 1 && (
-                <div className="hidden md:block absolute top-4 left-full w-full h-px bg-border -translate-y-0.5 ml-6 mr-6" style={{ width: "calc(100% - 3rem)" }} />
+                <div className="hidden lg:block absolute top-4 left-full w-full h-px bg-border -translate-y-0.5 ml-6 mr-6" style={{ width: "calc(100% - 3rem)" }} />
               )}
               <span className="font-heading text-4xl font-semibold text-brand/30 leading-none block mb-4">
                 {step.n}
@@ -195,12 +210,12 @@ export function Landing() {
         >
           <div className="heading-sub mb-4">What it does</div>
           <h2 className="font-heading text-3xl md:text-4xl font-semibold tracking-tight text-foreground max-w-lg">
-            Four things done{" "}
-            <span className="text-gradient">exceptionally well.</span>
+            Everything a job search needs,{" "}
+            <span className="text-gradient">done for you.</span>
           </h2>
         </motion.div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {features.map((f, i) => (
             <motion.div
               key={f.title}
@@ -239,8 +254,8 @@ export function Landing() {
               <p className="text-muted-foreground leading-relaxed mb-4 text-sm">
                 Aethlara is fully open source. Every line of code is public on
                 GitHub — nothing is hidden, no black boxes. Use the hosted
-                version free with your own API key, or self-host it on your
-                infrastructure.
+                version free with your own Anthropic or OpenRouter key, or
+                self-host it on your infrastructure.
               </p>
               <p className="text-muted-foreground leading-relaxed mb-8 text-sm">
                 Your resume and job data never leave a server you don't
@@ -275,11 +290,12 @@ export function Landing() {
                 <span className="text-brand">cp</span>
                 <span className="text-neutral-300"> .env.example .env</span>
               </p>
-              <p className="mt-1 text-neutral-500"># add your API key, then:</p>
+              <p className="mt-1 text-neutral-500"># fill in .env, then:</p>
               <p>
                 <span className="text-brand">docker</span>
                 <span className="text-neutral-300"> compose up</span>
               </p>
+              <p className="mt-1 text-neutral-500"># add your AI key in Settings — no server key needed</p>
             </div>
           </div>
         </motion.div>
@@ -296,10 +312,11 @@ export function Landing() {
           <div className="absolute inset-0 bg-gradient-to-br from-brand/[0.06] via-transparent to-transparent pointer-events-none" />
           <div className="relative z-10">
             <h2 className="font-heading text-3xl md:text-4xl font-semibold tracking-tight text-foreground mb-4">
-              Stop applying blind.
+              Stop applying by hand.
             </h2>
-            <p className="text-muted-foreground max-w-sm mx-auto mb-8 text-base leading-6">
-              Know your match score before you write a single word.
+            <p className="text-muted-foreground max-w-md mx-auto mb-8 text-base leading-6">
+              The agent finds the jobs, applies and follows up. You just say yes
+              to the ones worth it.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <Link to="/signup">
