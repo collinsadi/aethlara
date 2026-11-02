@@ -14,13 +14,10 @@ import {
   uploadResumeApi,
   deleteResumeApi,
 } from "@/api/resumes";
+import { queryKeys } from "@/lib/queryKeys";
 import type { ResumeItem } from "@/lib/types";
 
-export const resumeKeys = {
-  all: ["resumes"] as const,
-  list: () => [...resumeKeys.all, "list"] as const,
-  previewUrl: (id: string) => [...resumeKeys.all, "preview", id] as const,
-};
+const resumeKeys = queryKeys.resumes;
 
 export function useResumes() {
   return useQuery({
@@ -56,6 +53,8 @@ export function useUploadResume() {
     }) => uploadResumeApi(file, name, onProgress),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: resumeKeys.list() });
+      // The autopilot picks the latest processed resume on first use.
+      qc.invalidateQueries({ queryKey: queryKeys.agent.overview() });
     },
   });
 }
@@ -80,6 +79,7 @@ export function useDeleteResume() {
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: resumeKeys.list() });
+      qc.invalidateQueries({ queryKey: queryKeys.agent.overview() });
     },
   });
 }
