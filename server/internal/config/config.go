@@ -47,13 +47,22 @@ type Config struct {
 	R2BucketName      string
 	R2PublicEndpoint  string
 
-	// OpenRouter AI
-	// NOTE: there is no platform-level API key. Every AI call resolves a key
-	// from the authenticated user's encrypted record via apikey/settings. If a
-	// user has no valid key, the AI gate middleware + service-level check
-	// ensure no OpenRouter request is ever made on their behalf.
-	OpenRouterBaseURL string
-	OpenRouterModel   string
+	// AI providers
+	// NOTE: there is no platform-level API key for either provider. Every AI
+	// call resolves a key from the authenticated user's encrypted record via
+	// apikey/settings. If a user has no valid key for their active provider,
+	// the AI gate middleware + service-level check ensure no provider request
+	// is ever made on their behalf.
+	//
+	// Each provider has a "smart" model (tailoring, form filling, cover
+	// letters) and a "fast" model (bulk lead scoring, email triage). Users
+	// can override both per account in Settings.
+	OpenRouterBaseURL   string
+	OpenRouterModel     string // smart default
+	OpenRouterFastModel string
+	AnthropicBaseURL    string // optional override; empty uses the SDK default
+	AnthropicModel      string // smart default
+	AnthropicFastModel  string
 
 	// API key encryption
 	APIKeyEncryptionSecret string // required: 64-char hex (32 bytes)
@@ -158,8 +167,12 @@ func Load() (*Config, error) {
 		R2BucketName:      required("R2_BUCKET_NAME"),
 		R2PublicEndpoint:  optional("R2_PUBLIC_ENDPOINT", ""),
 
-		OpenRouterBaseURL: optional("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
-		OpenRouterModel:   optional("OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet"),
+		OpenRouterBaseURL:   optional("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+		OpenRouterModel:     optional("OPENROUTER_MODEL", "anthropic/claude-opus-5.5"),
+		OpenRouterFastModel: optional("OPENROUTER_FAST_MODEL", "anthropic/claude-haiku-5.5"),
+		AnthropicBaseURL:    optional("ANTHROPIC_BASE_URL", ""),
+		AnthropicModel:      optional("ANTHROPIC_MODEL", "claude-opus-5-5"),
+		AnthropicFastModel:  optional("ANTHROPIC_FAST_MODEL", "claude-haiku-5-5"),
 
 		APIKeyEncryptionSecret: required("API_KEY_ENCRYPTION_SECRET"),
 		APIKeyPreviewLength:    parseInt("API_KEY_PREVIEW_LENGTH", 18),
