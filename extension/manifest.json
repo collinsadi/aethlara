@@ -1,13 +1,17 @@
 {
   "manifest_version": 3,
   "name": "Aethlara",
-  "version": "1.0.0",
-  "description": "AI-powered job autofill and extraction for Aethlara users.",
+  "version": "2.0.0",
+  "description": "Your job-search autopilot: fills and submits the applications you approve, in your own browser.",
+  "minimum_chrome_version": "116",
   "permissions": [
-    "activeTab",
-    "scripting",
     "storage",
-    "alarms"
+    "alarms",
+    "tabs",
+    "scripting",
+    "activeTab",
+    "sidePanel",
+    "notifications"
   ],
   "host_permissions": [
     "https://aethlara-api.collinsadi.xyz/*",
@@ -15,6 +19,9 @@
   ],
   "background": {
     "service_worker": "background/index.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
   },
   "content_scripts": [
     {
@@ -30,7 +37,7 @@
     "128": "icons/icon.png"
   },
   "action": {
-    "default_popup": "index.html",
+    "default_title": "Open Aethlara",
     "default_icon": {
       "16": "icons/icon.png",
       "32": "icons/icon.png",

@@ -1,114 +1,184 @@
-import { scanFields } from './scanner'
-import { fillFields } from './filler'
+import { adapterFor } from './adapters'
+import { callBackground } from './bridge'
+import { detectAts, detectLoginWall, findBestFormRoot, looksLikeJobPosting } from './detect'
 import { extractPageText } from './extractor'
-import { MessageType, type ExtMessage, type ScannedField } from '@/types'
+import { prioritise, toFormField, type ScannedField } from './fields'
+import { fillField } from './filler'
+import { abortFlow, activeJob, activeRunId, startFlow } from './flow'
+import { askToFill } from './overlay'
+import { scanForm } from './scanner'
+import { startWatch } from './watch'
+import { EXTENSION_TOKEN_PARAM } from '@/lib/config'
+import { randomId } from '@/lib/util'
+import type { ContentReplies, ContentRequest, LegacyFillSummary, LegacyScannedField, PageInfo } from '@/types'
 
-// ── Handshake relay ────────────────────────────────────────────────────────────
-// When the dashboard opens /extension-handshake?ext_token=..., we read the token
-// from the URL and forward it to the service worker. This runs independently of
-// the dashboard origin so it works on localhost, prod, preview, etc.
-void (function relayHandshakeIfPresent() {
+/**
+ * Content script (top frame of every http(s) page)
+ *  - relays the dashboard handshake token to the service worker
+ *  - runs autopilot applications in tabs the service worker manages
+ *  - answers side-panel questions about the page (job posting? form?)
+ *  - the saved-job autofill with an explicit consent bar
+ * It never calls the Aethlara API itself and never sees tokens.
+ */
+
+const isTopFrame = window.top === window
+const isWebPage = /^https?:$/.test(location.protocol)
+
+// ── Dashboard handshake ───────────────────────────────────────────────────────
+
+function relayHandshake(): void {
   try {
-    if (!window.location.pathname.endsWith('/extension-handshake')) return
-    const token = new URLSearchParams(window.location.search).get('ext_token')
-    if (!token) return
-    chrome.runtime
-      .sendMessage({ type: MessageType.AUTH_HANDSHAKE, payload: { ext_token: token } })
-      .catch(() => undefined) // extension context may be unavailable — ignore
+    if (!location.pathname.endsWith('/extension-handshake')) return
+    const token = new URLSearchParams(location.search).get(EXTENSION_TOKEN_PARAM)
+    if (!token || !/^[A-Za-z0-9._~-]{16,512}$/.test(token)) return
+    // The background checks that this page is on the dashboard origin.
+    void callBackground({ type: 'AUTH_HANDSHAKE', extToken: token }, 2).catch(() => undefined)
   } catch {
-    // Never let handshake relay errors break the content script
+    // never break the page
   }
-})()
-
-// Consent overlay state
-let overlayEl: HTMLElement | null = null
-let pendingFillCallback: (() => void) | null = null
-
-function showOverlay(fieldCount: number, onConfirm: () => void, onCancel: () => void): void {
-  removeOverlay()
-
-  const overlay = document.createElement('div')
-  overlay.id = '__aethlara_overlay__'
-  overlay.style.cssText = `
-    position: fixed; top: 0; left: 0; right: 0; z-index: 2147483647;
-    background: #18181b; color: #fff; font-family: system-ui, sans-serif;
-    font-size: 13px; padding: 10px 16px;
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-  `
-  overlay.innerHTML = `
-    <span>Aethlara is about to fill <strong>${fieldCount}</strong> field${fieldCount !== 1 ? 's' : ''}.</span>
-    <span style="display:flex;gap:8px;">
-      <button id="__aethlara_fill__" style="background:#7c3aed;color:#fff;border:none;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px;">Fill</button>
-      <button id="__aethlara_cancel__" style="background:transparent;color:#a1a1aa;border:1px solid #3f3f46;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px;">Cancel</button>
-    </span>
-  `
-
-  document.body.appendChild(overlay)
-  overlayEl = overlay
-  pendingFillCallback = onConfirm
-
-  overlay.querySelector('#__aethlara_fill__')!.addEventListener('click', () => {
-    removeOverlay()
-    onConfirm()
-  })
-  overlay.querySelector('#__aethlara_cancel__')!.addEventListener('click', () => {
-    removeOverlay()
-    onCancel()
-  })
 }
 
-function removeOverlay(): void {
-  overlayEl?.remove()
-  overlayEl = null
-  pendingFillCallback = null
+// ── Autopilot pick-up after navigation ───────────────────────────────────────
+
+async function hello(): Promise<void> {
+  try {
+    const reply = await callBackground({ type: 'FLOW_HELLO', url: location.href }, 1)
+    if (reply.flow) startFlow(reply.flow)
+    else if (reply.watch) startWatch(reply.watch)
+  } catch {
+    // extension reloading or not signed in: nothing to do on this page
+  }
 }
 
-const VALID_TYPES = new Set(Object.values(MessageType))
+// ── Side panel: page info & saved-job autofill ───────────────────────────────
 
-chrome.runtime.onMessage.addListener((message: ExtMessage, sender, sendResponse) => {
-  // Reject messages not from our extension
-  if (sender.id !== chrome.runtime.id) return
+const legacyScans = new Map<string, ScannedField[]>()
 
-  if (!VALID_TYPES.has(message.type)) return
+async function pageInfo(): Promise<PageInfo> {
+  const adapter = adapterFor(location.href)
+  const root = adapter.findForm() ?? findBestFormRoot()
+  let fieldCount = 0
+  let hasResume = false
+  let identity = false
+  if (root) {
+    const fields = await scanForm(root, { skip: adapter.skip?.bind(adapter) })
+    fieldCount = fields.length
+    hasResume = fields.some((f) => f.handle.kind === 'file' && f.handle.fileRole === 'resume')
+    identity = fields.some((f) => /\b(name|e-?mail|phone)\b/i.test(`${f.label} ${f.name} ${f.inputType}`))
+  }
+  const job = activeJob()
+  return {
+    url: location.href,
+    title: document.title,
+    ats: detectAts(location.href),
+    isJobPosting: looksLikeJobPosting(),
+    isApplicationForm: fieldCount >= 2 && (hasResume || (identity && fieldCount >= 3)),
+    fieldCount,
+    hasResumeField: hasResume,
+    loginWall: detectLoginWall(),
+    managed: job ? { mode: job.mode } : null,
+  }
+}
 
-  switch (message.type) {
-    case MessageType.SCAN_FIELDS: {
-      const fields = scanFields()
-      sendResponse({ type: MessageType.FIELDS_RESULT, payload: fields })
-      break
-    }
-
-    case MessageType.FILL_FIELDS: {
-      const { fields, fillMap } = message.payload as {
-        fields: ScannedField[]
-        fillMap: Record<string, string | null>
+async function legacyScan(): Promise<{ scanId: string; fields: LegacyScannedField[] }> {
+  const adapter = adapterFor(location.href)
+  const root = adapter.findForm() ?? findBestFormRoot() ?? document.body
+  const scanned = await scanForm(root, { readComboOptions: true, excludeFiles: true, skip: adapter.skip?.bind(adapter) })
+  const fields = prioritise(scanned, 100)
+  const scanId = randomId(8)
+  legacyScans.set(scanId, fields)
+  while (legacyScans.size > 3) legacyScans.delete(legacyScans.keys().next().value as string)
+  return {
+    scanId,
+    fields: fields.map((f) => {
+      const ff = toFormField(f)
+      return {
+        field_id: ff.field_id,
+        label: ff.label,
+        type: ff.type,
+        placeholder: ff.placeholder ?? null,
+        required: ff.required,
+        options: ff.options ?? null,
       }
-      const toFill = fields.filter((f) => fillMap[f.field_id] != null)
+    }),
+  }
+}
 
-      showOverlay(
-        toFill.length,
-        async () => {
-          const summary = await fillFields(fields, fillMap)
-          sendResponse({ type: MessageType.FILL_RESULT, payload: summary })
-        },
-        () => {
-          sendResponse({ type: MessageType.FILL_RESULT, payload: { filled: 0, skipped: toFill.length, failed: [], cancelled: true } })
-        }
-      )
-      return true // async response
-    }
-
-    case MessageType.EXTRACT_TEXT: {
-      const text = extractPageText()
-      sendResponse({ type: MessageType.TEXT_RESULT, payload: text })
-      break
-    }
-
-    case MessageType.HIDE_OVERLAY: {
-      removeOverlay()
-      sendResponse({})
-      break
+async function legacyFill(scanId: string, fills: Record<string, string | null>): Promise<LegacyFillSummary> {
+  const fields = legacyScans.get(scanId)
+  if (!fields) throw new Error('The page changed since it was scanned. Scan it again.')
+  const toFill = fields.filter((f) => typeof fills[f.id] === 'string' && fills[f.id]!.trim() !== '')
+  if (!toFill.length) return { filled: 0, skipped: fields.length, failed: [] }
+  const confirmed = await askToFill(toFill.length)
+  if (!confirmed) return { filled: 0, skipped: toFill.length, failed: [], cancelled: true }
+  let filled = 0
+  const failed: string[] = []
+  for (const f of toFill) {
+    try {
+      if (await fillField(f, fills[f.id]!)) filled++
+      else failed.push(f.id)
+    } catch {
+      failed.push(f.id)
     }
   }
-})
+  return { filled, skipped: fields.length - toFill.length, failed }
+}
+
+// ── Message handling ──────────────────────────────────────────────────────────
+
+const REQUEST_TYPES = new Set<ContentRequest['type']>([
+  'PING',
+  'FLOW_START',
+  'FLOW_ABORT',
+  'WATCH_START',
+  'PAGE_INFO',
+  'EXTRACT_TEXT',
+  'LEGACY_SCAN',
+  'LEGACY_FILL',
+])
+
+function isRequest(message: unknown): message is ContentRequest {
+  return (
+    typeof message === 'object' &&
+    message !== null &&
+    REQUEST_TYPES.has((message as { type?: ContentRequest['type'] }).type as ContentRequest['type'])
+  )
+}
+
+async function handle(message: ContentRequest): Promise<ContentReplies[ContentRequest['type']]> {
+  switch (message.type) {
+    case 'PING':
+      return { alive: true, runId: activeRunId() }
+    case 'FLOW_START':
+      return { accepted: startFlow(message.job) }
+    case 'FLOW_ABORT':
+      return { aborted: abortFlow(message.runId) }
+    case 'WATCH_START':
+      return { watching: startWatch(message.watch) }
+    case 'PAGE_INFO':
+      return pageInfo()
+    case 'EXTRACT_TEXT':
+      return { text: extractPageText() }
+    case 'LEGACY_SCAN':
+      return legacyScan()
+    case 'LEGACY_FILL':
+      return legacyFill(message.scanId, message.fills)
+  }
+}
+
+if (isTopFrame) {
+  chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) => {
+    // Only our own extension (service worker / side panel) may drive this script.
+    if (sender.id !== chrome.runtime.id || !isRequest(message)) return false
+    handle(message).then(
+      (data) => sendResponse({ ok: true, data }),
+      (err: unknown) => sendResponse({ ok: false, error: err instanceof Error ? err.message : 'Content script error' }),
+    )
+    return true
+  })
+
+  if (isWebPage) {
+    relayHandshake()
+    void hello()
+  }
+}

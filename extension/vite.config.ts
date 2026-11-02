@@ -1,7 +1,7 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv, type Plugin, type UserConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
-import { copyFileSync, existsSync, mkdirSync, cpSync } from 'fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 
 /**
  * Chrome MV3 build
@@ -10,19 +10,51 @@ import { copyFileSync, existsSync, mkdirSync, cpSync } from 'fs'
  * relative chunk paths are flaky in practice. To avoid both classes of bug we
  * build three separate bundles, each fully self-contained (IIFE, no imports):
  *
- *   EXT_ENTRY=popup       → dist/index.html + dist/assets/*   (+ manifest, icons)
- *   EXT_ENTRY=background  → dist/background/index.js          (IIFE, inlined)
- *   EXT_ENTRY=content     → dist/content/index.js             (IIFE, inlined)
+ *   EXT_ENTRY=ui          → dist/sidepanel.html + dist/assets/*  (+ manifest, icons)
+ *   EXT_ENTRY=background  → dist/background/index.js             (IIFE, inlined)
+ *   EXT_ENTRY=content     → dist/content/index.js                (IIFE, inlined)
  *
  * `npm run build` runs all three in sequence. The first clears dist; the
  * subsequent two append to it (emptyOutDir: false).
  */
 
-function copyExtensionAssets() {
+// Keep in sync with the fallback in src/lib/config.ts.
+const DEFAULT_API_BASE_URL = 'https://aethlara-api.collinsadi.xyz/api/v1'
+
+/**
+ * The extension only needs host access to its own API. The API origin is
+ * derived from VITE_API_BASE_URL at build time and merged into the static
+ * host_permissions list, so self-hosted and local builds
+ * (e.g. http://localhost:18080/api/v1) work without editing manifest.json.
+ */
+function apiHostPermission(apiBaseUrl: string): string | null {
+  try {
+    const url = new URL(apiBaseUrl)
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+    return `${url.protocol}//${url.host}/*`
+  } catch {
+    return null
+  }
+}
+
+function extensionAssets(env: Record<string, string>): Plugin {
   return {
-    name: 'copy-extension-assets',
+    name: 'aethlara-extension-assets',
     closeBundle() {
-      copyFileSync('manifest.json', 'dist/manifest.json')
+      const manifest = JSON.parse(readFileSync('manifest.json', 'utf8')) as {
+        host_permissions?: string[]
+      }
+      const apiBase = env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL
+      const pattern = apiHostPermission(apiBase)
+      if (!pattern) {
+        throw new Error(`VITE_API_BASE_URL is not a valid http(s) URL: ${apiBase}`)
+      }
+      const hosts = new Set(manifest.host_permissions ?? [])
+      hosts.add(pattern)
+      manifest.host_permissions = [...hosts]
+
+      mkdirSync('dist', { recursive: true })
+      writeFileSync('dist/manifest.json', `${JSON.stringify(manifest, null, 2)}\n`)
       if (existsSync('icons')) {
         mkdirSync('dist/icons', { recursive: true })
         cpSync('icons', 'dist/icons', { recursive: true })
@@ -31,58 +63,44 @@ function copyExtensionAssets() {
   }
 }
 
-const entry = process.env.EXT_ENTRY ?? 'popup'
+const entry = process.env.EXT_ENTRY ?? 'ui'
 const aliases = { '@': resolve(__dirname, 'src') }
 
-export default defineConfig(() => {
-  if (entry === 'background') {
-    return {
-      resolve: { alias: aliases },
-      build: {
-        outDir: 'dist',
-        emptyOutDir: false,
-        rollupOptions: {
-          input: resolve(__dirname, 'src/background/index.ts'),
-          output: {
-            format: 'iife' as const,
-            entryFileNames: 'background/index.js',
-            inlineDynamicImports: true,
-          },
-        },
-      },
-    }
-  }
-
-  if (entry === 'content') {
-    return {
-      resolve: { alias: aliases },
-      build: {
-        outDir: 'dist',
-        emptyOutDir: false,
-        rollupOptions: {
-          input: resolve(__dirname, 'src/content/index.ts'),
-          output: {
-            format: 'iife' as const,
-            entryFileNames: 'content/index.js',
-            inlineDynamicImports: true,
-          },
-        },
-      },
-    }
-  }
-
-  // popup — default; emits manifest + icons. Never clears dist, because in
-  // watch mode that would delete dist/content and dist/background between
-  // rebuilds. The `build` npm script does an explicit `rm -rf dist` up front.
+function scriptBundle(input: string, fileName: string): UserConfig {
   return {
-    plugins: [react(), copyExtensionAssets()],
+    resolve: { alias: aliases },
+    build: {
+      outDir: 'dist',
+      emptyOutDir: false,
+      rollupOptions: {
+        input: resolve(__dirname, input),
+        output: {
+          format: 'iife' as const,
+          entryFileNames: fileName,
+          inlineDynamicImports: true,
+        },
+      },
+    },
+  }
+}
+
+export default defineConfig(({ mode }) => {
+  if (entry === 'background') return scriptBundle('src/background/index.ts', 'background/index.js')
+  if (entry === 'content') return scriptBundle('src/content/index.ts', 'content/index.js')
+
+  // ui (side panel) — default; emits manifest + icons. Never clears dist,
+  // because in watch mode that would delete dist/content and dist/background
+  // between rebuilds. The `build` npm script does an explicit `rm -rf dist`.
+  const env = loadEnv(mode, process.cwd(), 'VITE_')
+  return {
+    plugins: [react(), extensionAssets(env)],
     resolve: { alias: aliases },
     base: './',
     build: {
       outDir: 'dist',
       emptyOutDir: false,
       rollupOptions: {
-        input: resolve(__dirname, 'index.html'),
+        input: resolve(__dirname, 'sidepanel.html'),
         output: {
           entryFileNames: 'assets/[name]-[hash].js',
           chunkFileNames: 'assets/[name]-[hash].js',
