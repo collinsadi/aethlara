@@ -8,7 +8,7 @@
  * Stops on: success, terminal error, unmount, or modal close.
  */
 import { useState, useEffect, useRef } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -79,7 +79,7 @@ export function CreateJobModal({ open, onClose, onSuccess }: Props) {
     },
   })
 
-  const jobText = textForm.watch('job_text')
+  const jobText = useWatch({ control: textForm.control, name: 'job_text' })
 
   // ── Polling ─────────────────────────────────────────────────────────────────
   const pollingJobId = createdJob?.id ?? null
@@ -87,34 +87,32 @@ export function CreateJobModal({ open, onClose, onSuccess }: Props) {
     pollEnabled ? pollingJobId : null
   )
 
-  // Check if pipeline is done
-  useEffect(() => {
-    if (!polledJob || !pollEnabled) return
-    const { extraction_status, alignment_status } = polledJob
-    const isTerminal = (s: string) =>
-      ['completed', 'failed', 'misaligned'].includes(s)
-
-    if (isTerminal(extraction_status) && isTerminal(alignment_status)) {
-      setPollEnabled(false)
-      setCreatedJob(polledJob)
-      setStep('result')
-    }
-  }, [polledJob, pollEnabled])
+  // Pipeline finished? Move to the result step (state adjusted during render,
+  // guarded by pollEnabled so it runs once).
+  const isTerminal = (s: string) => ['completed', 'failed', 'misaligned'].includes(s)
+  if (
+    pollEnabled &&
+    polledJob &&
+    isTerminal(polledJob.extraction_status) &&
+    isTerminal(polledJob.alignment_status)
+  ) {
+    setPollEnabled(false)
+    setCreatedJob(polledJob)
+    setStep('result')
+  }
 
   // Poll every 3 seconds while in processing step
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   useEffect(() => {
     if (step === 'processing' && pollEnabled && pollingJobId) {
       pollRef.current = setInterval(() => {
-        // Invalidation handled by useJobDetail's refetch — we just keep the
-        // query enabled and let React Query's staleTime handle freshness.
-        // Force refetch by toggling:
+        qc.invalidateQueries({ queryKey: queryKeys.jobs.detail(pollingJobId) })
       }, 3000)
     }
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
     }
-  }, [step, pollEnabled, pollingJobId])
+  }, [step, pollEnabled, pollingJobId, qc])
 
   const reset = () => {
     setStep('input_method')
@@ -212,7 +210,12 @@ export function CreateJobModal({ open, onClose, onSuccess }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Add a job"
+    >
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
         onClick={handleClose}
