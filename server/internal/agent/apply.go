@@ -109,6 +109,9 @@ func idPtr(a *Application) *string {
 // cover letter, then either email the application or hand it to the
 // extension. Respects the daily limit.
 func (s *Service) applyQueued(ctx context.Context, run *Run, p *Profile, resume *ResumeInfo, stats *RunStats) error {
+	if n, err := s.repo.RequeueInterrupted(ctx, p.UserID); err == nil && n > 0 {
+		slog.Info("agent: re-queued interrupted applications", "count", n)
+	}
 	used, err := s.repo.CountSubmittedSince(ctx, p.UserID, time.Now().Add(-24*time.Hour))
 	if err != nil {
 		return err

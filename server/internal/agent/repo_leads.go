@@ -411,6 +411,16 @@ func (r *Repository) ApplicationsByStatus(ctx context.Context, userID, status st
 	return out, rows.Err()
 }
 
+// RequeueInterrupted puts applications left in "preparing" by an
+// interrupted run back in the queue. Safe because a user never has two runs
+// at once: anything still preparing when a run starts is stale.
+func (r *Repository) RequeueInterrupted(ctx context.Context, userID string) (int64, error) {
+	tag, err := r.db.Exec(ctx, `
+		UPDATE applications SET status = 'queued', updated_at = NOW()
+		WHERE user_id = $1 AND status = 'preparing'`, userID)
+	return tag.RowsAffected(), err
+}
+
 func (r *Repository) CountSubmittedSince(ctx context.Context, userID string, since time.Time) (int, error) {
 	var n int
 	err := r.db.QueryRow(ctx, `
