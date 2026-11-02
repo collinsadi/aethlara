@@ -19,13 +19,21 @@ var privateRanges []*net.IPNet
 
 func init() {
 	cidrs := []string{
+		"0.0.0.0/8", // "this network"; 0.0.0.0 reaches localhost on Linux
 		"127.0.0.0/8",
 		"10.0.0.0/8",
+		"100.64.0.0/10", // carrier-grade NAT
 		"172.16.0.0/12",
 		"192.168.0.0/16",
 		"169.254.0.0/16", // link-local / AWS metadata
+		"198.18.0.0/15",  // benchmarking
+		"224.0.0.0/4",    // multicast
+		"240.0.0.0/4",    // reserved
+		"::/128",
 		"::1/128",
 		"fc00::/7",
+		"fe80::/10",
+		"ff00::/8",
 	}
 	for _, cidr := range cidrs {
 		_, network, _ := net.ParseCIDR(cidr)
@@ -63,28 +71,46 @@ func validateSSRF(ctx context.Context, host string) error {
 	return nil
 }
 
+// Page is a fetched HTML document.
+type Page struct {
+	URL  string // final URL after redirects
+	HTML string
+}
+
 // ScrapeJob fetches and sanitises the HTML at the given URL.
 // It enforces SSRF prevention, size limits, redirect caps, and content type checks.
 func ScrapeJob(ctx context.Context, rawURL string, cfg *config.Config) (string, error) {
+	page, err := FetchPage(ctx, rawURL, cfg)
+	if err != nil {
+		return "", err
+	}
+	return sanitizeHTML(page.HTML), nil
+}
+
+// FetchPage GETs an HTTPS HTML page and returns its raw markup. Every
+// address involved (the URL, each redirect and the dialled IP) is checked
+// against private and internal ranges, so it is safe to call with URLs
+// taken from third-party pages.
+func FetchPage(ctx context.Context, rawURL string, cfg *config.Config) (*Page, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return "", fmt.Errorf("invalid URL: %w", err)
+		return nil, fmt.Errorf("invalid URL: %w", err)
 	}
 
 	// Scheme must be https
 	if parsed.Scheme != "https" {
-		return "", fmt.Errorf("only HTTPS URLs are allowed")
+		return nil, fmt.Errorf("only HTTPS URLs are allowed")
 	}
 
 	// Block scraping the platform's own domain
 	appURL, _ := url.Parse(cfg.AppURL)
 	if strings.EqualFold(parsed.Hostname(), appURL.Hostname()) {
-		return "", fmt.Errorf("cannot scrape the platform's own domain")
+		return nil, fmt.Errorf("cannot scrape the platform's own domain")
 	}
 
 	// Pre-request SSRF check
 	if err := validateSSRF(ctx, parsed.Hostname()); err != nil {
-		return "", err
+		return nil, err
 	}
 
 	timeout := time.Duration(cfg.ScraperRequestTimeoutSeconds) * time.Second
@@ -135,37 +161,41 @@ func ScrapeJob(ctx context.Context, rawURL string, cfg *config.Config) (string, 
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "text/html")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("HTTP request failed: %w", err)
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("unexpected HTTP status %d", resp.StatusCode)
+		return nil, fmt.Errorf("unexpected HTTP status %d", resp.StatusCode)
 	}
 
 	ct := resp.Header.Get("Content-Type")
 	if !strings.Contains(ct, "text/html") {
-		return "", fmt.Errorf("expected text/html content type, got %q", ct)
+		return nil, fmt.Errorf("expected text/html content type, got %q", ct)
 	}
 
 	// Stream and abort if body exceeds max size
 	limited := io.LimitReader(resp.Body, maxBytes+1)
 	raw, err := io.ReadAll(limited)
 	if err != nil {
-		return "", fmt.Errorf("read response body: %w", err)
+		return nil, fmt.Errorf("read response body: %w", err)
 	}
 	if int64(len(raw)) > maxBytes {
-		return "", fmt.Errorf("response body exceeds maximum allowed size of %d bytes", maxBytes)
+		return nil, fmt.Errorf("response body exceeds maximum allowed size of %d bytes", maxBytes)
 	}
 
-	return sanitizeHTML(string(raw)), nil
+	final := rawURL
+	if resp.Request != nil && resp.Request.URL != nil {
+		final = resp.Request.URL.String()
+	}
+	return &Page{URL: final, HTML: string(raw)}, nil
 }
 
 // --- HTML sanitisation ---
@@ -206,3 +236,6 @@ func sanitizeHTML(raw string) string {
 func SanitizeText(raw string) string {
 	return sanitizeHTML(raw)
 }
+
+// IsPrivateIP reports whether ip is in a range FetchPage refuses to reach.
+func IsPrivateIP(ip net.IP) bool { return isPrivateIP(ip) }
