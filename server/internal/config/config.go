@@ -47,6 +47,8 @@ type Config struct {
 	R2SecretAccessKey string
 	R2BucketName      string
 	R2PublicEndpoint  string
+	// R2Endpoint overrides the S3 API endpoint (MinIO, local testing).
+	R2Endpoint string
 
 	// AI providers
 	// NOTE: there is no platform-level API key for either provider. Every AI
@@ -94,10 +96,10 @@ type Config struct {
 	MaxPageSize     int
 
 	// Chrome extension auth
-	ExtensionTokenExpirySecs    int // handshake token validity (default 60)
-	ExtensionTokenRatePerHour   int // max handshake tokens per user per hour (default 5)
-	DashboardURL                string
-	ExtensionDeviceMaxPerUser   int // active long-lived extension devices per user
+	ExtensionTokenExpirySecs  int // handshake token validity (default 60)
+	ExtensionTokenRatePerHour int // max handshake tokens per user per hour (default 5)
+	DashboardURL              string
+	ExtensionDeviceMaxPerUser int // active long-lived extension devices per user
 
 	// Autopilot (internal/agent)
 	// AgentMailDomain is the domain (ideally a subdomain such as
@@ -165,17 +167,17 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		AppEnv:                     optional("APP_ENV", "development"),
-		AppName:                    optional("APP_NAME", "App"),
-		Port:                       optional("PORT", "8080"),
-		AppURL:                     optional("APP_URL", "http://localhost:8080"),
-		DatabaseURL:                required("DATABASE_URL"),
-		JWTAccessSecret:            required("JWT_ACCESS_SECRET"),
-		JWTRefreshSecret:           required("JWT_REFRESH_SECRET"),
-		JWTAccessExpiryMinutes:     parseInt("JWT_ACCESS_EXPIRY_MINUTES", 15),
-		JWTRefreshExpiryDays:       parseInt("JWT_REFRESH_EXPIRY_DAYS", 30),
-		OTPExpiryMinutes:           parseInt("OTP_EXPIRY_MINUTES", 10),
-		OTPMaxAttempts:             parseInt("OTP_MAX_ATTEMPTS", 5),
+		AppEnv:                 optional("APP_ENV", "development"),
+		AppName:                optional("APP_NAME", "App"),
+		Port:                   optional("PORT", "8080"),
+		AppURL:                 optional("APP_URL", "http://localhost:8080"),
+		DatabaseURL:            required("DATABASE_URL"),
+		JWTAccessSecret:        required("JWT_ACCESS_SECRET"),
+		JWTRefreshSecret:       required("JWT_REFRESH_SECRET"),
+		JWTAccessExpiryMinutes: parseInt("JWT_ACCESS_EXPIRY_MINUTES", 15),
+		JWTRefreshExpiryDays:   parseInt("JWT_REFRESH_EXPIRY_DAYS", 30),
+		OTPExpiryMinutes:       parseInt("OTP_EXPIRY_MINUTES", 10),
+		OTPMaxAttempts:         parseInt("OTP_MAX_ATTEMPTS", 5),
 		// Global per-IP limiter: defaults allow a typical SPA first paint (many parallel API calls).
 		RateLimitRequestsPerMinute: parseInt("RATE_LIMIT_REQUESTS_PER_MINUTE", 120),
 		RateLimitBurst:             parseInt("RATE_LIMIT_BURST", 60),
@@ -191,6 +193,7 @@ func Load() (*Config, error) {
 		R2SecretAccessKey: required("R2_SECRET_ACCESS_KEY"),
 		R2BucketName:      required("R2_BUCKET_NAME"),
 		R2PublicEndpoint:  optional("R2_PUBLIC_ENDPOINT", ""),
+		R2Endpoint:        optional("R2_ENDPOINT", ""),
 
 		OpenRouterBaseURL:   optional("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
 		OpenRouterModel:     optional("OPENROUTER_MODEL", "anthropic/claude-opus-5.5"),
@@ -216,7 +219,7 @@ func Load() (*Config, error) {
 		// extraction + resume alignment) including a retry. The AI context
 		// is decoupled from the HTTP request so this is the hard ceiling.
 		JobAITimeoutSeconds: parseInt("JOB_AI_TIMEOUT_SECONDS", 120),
-		JobPDFMaxRetries:     parseInt("JOB_PDF_MAX_RETRIES", 3),
+		JobPDFMaxRetries:    parseInt("JOB_PDF_MAX_RETRIES", 3),
 
 		PDFStoragePrefix: optional("PDF_STORAGE_PREFIX", "jobs/resumes/"),
 		PDFTemplate:      optional("PDF_TEMPLATE", "minimal"),

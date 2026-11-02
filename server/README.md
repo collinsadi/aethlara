@@ -108,6 +108,7 @@ The canonical reference is [`.env.example`](./.env.example). Key variables:
 | `R2_SECRET_ACCESS_KEY` | R2 secret | |
 | `R2_BUCKET_NAME` | R2 bucket | |
 | `R2_PUBLIC_ENDPOINT` | R2 public endpoint URL | |
+| `R2_ENDPOINT` | S3 API endpoint override (MinIO or another S3-compatible store, local testing) | `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com` |
 | `SCRAPER_REQUEST_TIMEOUT_SECONDS` | HTTP fetch timeout for job URL scrape | `15` |
 | `SCRAPER_MAX_HTML_BYTES` | Hard cap on scraped HTML size | `2097152` |
 | `SCRAPER_USER_AGENT` | User-Agent sent by the scraper | `Mozilla/5.0 (compatible; Aethlara/1.0)` |

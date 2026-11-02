@@ -85,6 +85,7 @@ func main() {
 		cfg.R2AccessKeyID,
 		cfg.R2SecretAccessKey,
 		cfg.R2BucketName,
+		cfg.R2Endpoint,
 		cfg.ResumePresignedURLExpiry(),
 	)
 	if err != nil {
@@ -147,7 +148,7 @@ func main() {
 	// Router
 	r := chi.NewRouter()
 
-	r.Use(middleware.RealIP)           // must be first — sets real client IP in context
+	r.Use(middleware.RealIP) // must be first — sets real client IP in context
 	r.Use(middleware.RequestID)
 	r.Use(middleware.Logger)
 	r.Use(middleware.RecoverPanic)

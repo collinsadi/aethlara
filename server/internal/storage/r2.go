@@ -21,8 +21,13 @@ type R2Client struct {
 	expiry time.Duration
 }
 
-func NewR2Client(accountID, accessKeyID, secretAccessKey, bucket string, presignExpiry time.Duration) (*R2Client, error) {
-	endpoint := fmt.Sprintf("https://%s.r2.cloudflarestorage.com", accountID)
+// NewR2Client connects to Cloudflare R2. endpoint overrides the S3 API
+// endpoint (MinIO or another S3-compatible store, local testing); empty
+// means https://<accountID>.r2.cloudflarestorage.com.
+func NewR2Client(accountID, accessKeyID, secretAccessKey, bucket, endpoint string, presignExpiry time.Duration) (*R2Client, error) {
+	if endpoint == "" {
+		endpoint = fmt.Sprintf("https://%s.r2.cloudflarestorage.com", accountID)
+	}
 
 	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),
 		awsconfig.WithRegion("auto"),
