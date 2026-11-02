@@ -577,17 +577,25 @@ func (s *Service) packet(ctx context.Context, userID string, app *Application) (
 	if err != nil || user == nil {
 		return nil, ErrInternal
 	}
-	var doc *resumeDoc
+	var (
+		doc          *resumeDoc
+		resumeFormat string
+	)
 	if p.ResumeID != nil {
 		if r, err := s.repo.GetResume(ctx, userID, *p.ResumeID); err == nil && r != nil {
 			doc = parseResume(r.ExtractedJSON)
+			resumeFormat = r.FileFormat
 		}
 	}
 	answers, _ := s.repo.ListAnswers(ctx, userID)
 	ident := buildIdentity(p, user, doc)
-	name := "Resume.pdf"
+	ext := ".pdf"
+	if app.UseOriginalResume && resumeFormat != "" {
+		ext = map[string]string{"pdf": ".pdf", "docx": ".docx", "doc": ".doc", "md": ".md"}[resumeFormat]
+	}
+	name := "Resume" + ext
 	if ident.FirstName != "" {
-		name = regexp.MustCompile(`[^A-Za-z0-9_]+`).ReplaceAllString(ident.FirstName+"_"+ident.LastName, "") + "_Resume.pdf"
+		name = regexp.MustCompile(`[^A-Za-z0-9_]+`).ReplaceAllString(ident.FirstName+"_"+ident.LastName, "") + "_Resume" + ext
 	}
 	return &Packet{
 		Application: app,
