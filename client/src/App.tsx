@@ -8,6 +8,7 @@ import { AuthGuard, GuestGuard } from "@/middleware/AuthGuard";
 import { MarketingLayout } from "@/components/layout/MarketingLayout";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ScrollToTop } from "@/components/ScrollToTop";
+import { Toaster } from "@/components/ui/toaster";
 
 import { Landing } from "@/pages/Landing";
 import { About } from "@/pages/About";
@@ -89,6 +90,7 @@ export default function App() {
               {/* Fallback */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
+            <Toaster />
           </TooltipProvider>
         </ThemeProvider>
       </QueryClientProvider>
