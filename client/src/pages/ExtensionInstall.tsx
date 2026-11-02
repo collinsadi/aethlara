@@ -12,7 +12,7 @@ import {
   Settings as SettingsIcon,
 } from "lucide-react";
 
-const EXTENSION_FILE = "aethlara-extension-v1.zip";
+const EXTENSION_FILE = "aethlara-extension-v2.zip";
 const EXTENSION_URL = `/downloadable/${EXTENSION_FILE}`;
 const EXTENSION_GITHUB =
   "https://github.com/collinsadi/aethlara/tree/main/extension";
@@ -22,14 +22,14 @@ const steps = [
     n: "01",
     icon: Download,
     title: "Download the ZIP",
-    body: "Save aethlara-extension-v1.zip to a folder you'll remember — your Downloads folder is fine. Don't move it after step 2.",
+    body: "Save aethlara-extension-v2.zip to a folder you'll remember — your Downloads folder is fine. Don't move it after step 2.",
     tip: "Already downloaded automatically — check your downloads.",
   },
   {
     n: "02",
     icon: FolderOpen,
     title: "Unzip the file",
-    body: "Right-click the ZIP and choose Extract All (Windows), or double-click it (macOS). You should end up with a folder named aethlara-extension-v1 containing manifest.json, background, content, and other files.",
+    body: "Right-click the ZIP and choose Extract All (Windows), or double-click it (macOS). You should end up with a folder named aethlara-extension-v2 containing manifest.json, sidepanel.html, background, content, and other files.",
     tip: "Keep the unzipped folder somewhere permanent — Chrome loads the extension from this exact location.",
   },
   {
@@ -54,20 +54,20 @@ const steps = [
     n: "05",
     icon: FolderOpen,
     title: "Click 'Load unpacked'",
-    body: "A file picker opens. Navigate to and select the unzipped aethlara-extension-v1 folder (the one that contains manifest.json — not the ZIP file itself).",
+    body: "A file picker opens. Navigate to and select the unzipped aethlara-extension-v2 folder (the one that contains manifest.json — not the ZIP file itself).",
     tip: "If you see an error, make sure you selected the folder containing manifest.json, not its parent.",
   },
   {
     n: "06",
     icon: CheckCircle2,
-    title: "Pin the extension (optional but recommended)",
-    body: "Click the puzzle-piece icon in your browser toolbar, find Aethlara in the list, and click the pin icon. The Aethlara icon will now sit in your toolbar for one-click access.",
+    title: "Pin the extension (recommended)",
+    body: "Click the puzzle-piece icon in your browser toolbar, find Aethlara in the list, and click the pin icon. The Aethlara icon now sits in your toolbar; click it to open the side panel.",
   },
   {
     n: "07",
     icon: SettingsIcon,
     title: "Connect your account",
-    body: "Open your Aethlara dashboard, go to Settings → Extension, and click Connect Chrome Extension. A tab opens, the extension intercepts a one-time token, and you're connected. Sessions last 15 minutes — reconnect when prompted.",
+    body: "Open your Aethlara dashboard, go to Settings → Extension, and click Connect Chrome extension (the side panel's Open dashboard to connect takes you there). A tab opens, the extension picks up a one-time token, and you're connected. It stays connected across browser restarts until you sign out or disconnect it from Settings.",
   },
 ];
 
@@ -85,8 +85,12 @@ const troubleshooting = [
     a: "Make sure you've completed steps 1–6 and the extension is enabled at chrome://extensions. Refresh your dashboard tab and try again.",
   },
   {
-    q: "Session keeps expiring",
-    a: "By design — extension sessions last 15 minutes for security. Just reconnect from Settings → Extension whenever it expires.",
+    q: "I had the previous version installed",
+    a: "Remove the old Aethlara extension at chrome://extensions first, then load the new folder, so you don't end up with two copies. Version 1 can't apply for the autopilot.",
+  },
+  {
+    q: "The side panel says I'm signed out",
+    a: "The extension stays connected with a device token. It signs out only if you sign out in the side panel or disconnect the browser in Settings → Extension. Connect again from there.",
   },
 ];
 

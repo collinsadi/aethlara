@@ -18,9 +18,9 @@ import {
   Layers,
 } from "lucide-react";
 
-const EXTENSION_FILE = "aethlara-extension-v1.zip";
+const EXTENSION_FILE = "aethlara-extension-v2.zip";
 const EXTENSION_URL = `/downloadable/${EXTENSION_FILE}`;
-const EXTENSION_SIZE = "~125 KB";
+const EXTENSION_SIZE = "~135 KB";
 const EXTENSION_GITHUB =
   "https://github.com/collinsadi/aethlara/tree/main/extension";
 
@@ -28,15 +28,15 @@ const zipContents = [
   "manifest.json",
   "background/index.js",
   "content/index.js",
-  "popup (HTML, JS, CSS)",
+  "sidepanel.html + assets/",
   "icons/",
 ];
 
 const features = [
   {
     icon: Wand2,
-    title: "Autofill any application",
-    body: "Open a job application page, click Autofill, and the extension fills every form field on the page using AI and your tailored resume context.",
+    title: "Fill any application",
+    body: "On an application page, open the side panel and choose Fill this form. The extension fills every field from your tailored resume and saved answers, then stops before submitting so you can check.",
     badge: "Beta",
     highlight: true,
   },
@@ -65,7 +65,7 @@ const features = [
   {
     icon: Lock,
     title: "Scoped permissions",
-    body: "Only acts on the active tab when you click. Host permissions are scoped to the Aethlara API domain — never <all_urls>.",
+    body: "Host access is limited to the Aethlara API. The content script runs on every page so it can fill forms on any job site, but it never calls the API or sees your tokens.",
   },
   {
     icon: Zap,
@@ -163,7 +163,7 @@ export function Extension() {
                   Latest release
                 </span>
                 <span className="inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-full bg-muted text-muted-foreground border border-border">
-                  v1.0.0
+                  v2.0.0
                 </span>
               </div>
 
