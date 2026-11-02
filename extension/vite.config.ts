@@ -10,7 +10,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
  * relative chunk paths are flaky in practice. To avoid both classes of bug we
  * build three separate bundles, each fully self-contained (IIFE, no imports):
  *
- *   EXT_ENTRY=ui          → dist/sidepanel.html + dist/assets/*  (+ manifest, icons)
+ *   EXT_ENTRY=ui          → dist/sidepanel.html + dist/popup.html + dist/assets/*  (+ manifest, icons)
  *   EXT_ENTRY=background  → dist/background/index.js             (IIFE, inlined)
  *   EXT_ENTRY=content     → dist/content/index.js                (IIFE, inlined)
  *
@@ -101,7 +101,12 @@ export default defineConfig(({ mode }) => {
       outDir: 'dist',
       emptyOutDir: false,
       rollupOptions: {
-        input: resolve(__dirname, 'sidepanel.html'),
+        // The same app as a side panel (sidepanel.html) and as the toolbar
+        // popup (popup.html), for browsers without side panels such as Arc.
+        input: {
+          sidepanel: resolve(__dirname, 'sidepanel.html'),
+          popup: resolve(__dirname, 'popup.html'),
+        },
         output: {
           entryFileNames: 'assets/[name]-[hash].js',
           chunkFileNames: 'assets/[name]-[hash].js',

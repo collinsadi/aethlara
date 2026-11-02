@@ -154,11 +154,15 @@ chrome.runtime.onConnect.addListener((port) => {
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
+// The toolbar icon opens popup.html in every browser (Arc has no extension
+// side panels); the popup can move into the side panel where one exists.
+// Earlier versions opened the side panel on click, and Chrome remembers
+// that, so switch it off explicitly.
 async function configureSidePanel(): Promise<void> {
   try {
-    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
+    await chrome.sidePanel?.setPanelBehavior({ openPanelOnActionClick: false })
   } catch {
-    // older Chrome: the action falls back to doing nothing
+    // no side panel support: nothing to reset
   }
 }
 

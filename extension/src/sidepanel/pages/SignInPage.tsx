@@ -45,7 +45,7 @@ export function SignInPage({ connect }: { connect: ConnectStatus | null }) {
           <li>
             In <span style={{ color: 'var(--fg)' }}>Settings → Extension</span>, click <span style={{ color: 'var(--fg)' }}>Connect Chrome extension</span>.
           </li>
-          <li>This panel connects on its own. You stay connected until you sign out.</li>
+          <li>Aethlara connects on its own. You stay connected until you sign out.</li>
         </ol>
         <button className="btn btn-primary btn-full" onClick={start} disabled={connecting}>
           {waiting || connecting ? 'Open the dashboard again' : 'Open dashboard to connect'}

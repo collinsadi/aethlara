@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ExtJob } from '@/types'
-import { BackIcon, GearIcon, LogoIcon, Spinner } from './components/ui'
+import { BackIcon, GearIcon, LogoIcon, PanelIcon, Spinner } from './components/ui'
 import { useOverview } from './hooks/useAgent'
 import { useAuth, useRunnerState } from './hooks/useStorage'
 import { AutopilotPage } from './pages/AutopilotPage'
@@ -23,8 +23,32 @@ const OVERLAY_TITLES: Record<string, string> = {
   extract: 'Extract job',
 }
 
+/** popup.html: the toolbar popup. sidepanel.html: Chrome's side panel. */
+const IS_POPUP = document.documentElement.classList.contains('popup')
+
+/**
+ * Where the browser supports extension side panels (Chrome, Brave, Edge),
+ * the popup offers to move into one. Arc has no side panels: it gets the
+ * popup only. Resolves the window id up front because sidePanel.open must
+ * run synchronously inside the click.
+ */
+function useSidePanelWindow(): number | null {
+  const [windowId, setWindowId] = useState<number | null>(null)
+  useEffect(() => {
+    if (!IS_POPUP || typeof chrome.sidePanel?.open !== 'function' || isArc()) return
+    void chrome.windows.getCurrent().then((w) => setWindowId(w.id ?? null), () => setWindowId(null))
+  }, [])
+  return windowId
+}
+
+/** Arc marks its pages with --arc-palette-* CSS variables. */
+function isArc(): boolean {
+  return getComputedStyle(document.documentElement).getPropertyValue('--arc-palette-title').trim() !== ''
+}
+
 export function App() {
   const { device, loaded, connect } = useAuth()
+  const sidePanelWindow = useSidePanelWindow()
   const runner = useRunnerState()
   const [tab, setTab] = useState<Tab>('autopilot')
   const [overlay, setOverlay] = useState<Overlay>(null)
@@ -70,6 +94,21 @@ export function App() {
             <strong>{overlay ? OVERLAY_TITLES[overlay.name] : 'Aethlara'}</strong>
             <span>{overlay ? device.user.full_name : working ? 'Applying…' : device.user.full_name || device.user.email}</span>
           </div>
+          {!overlay && sidePanelWindow !== null && (
+            <button
+              className="icon-btn"
+              onClick={() => {
+                chrome.sidePanel.open({ windowId: sidePanelWindow }).then(
+                  () => window.close(),
+                  () => undefined, // not supported here after all: stay in the popup
+                )
+              }}
+              aria-label="Open in side panel"
+              title="Open in side panel"
+            >
+              <PanelIcon />
+            </button>
+          )}
           {!overlay && (
             <button className="icon-btn" onClick={() => setOverlay({ name: 'settings' })} aria-label="Settings">
               <GearIcon />

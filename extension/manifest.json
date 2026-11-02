@@ -35,6 +35,7 @@
   },
   "action": {
     "default_title": "Open Aethlara",
+    "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon.png",
       "32": "icons/icon.png",

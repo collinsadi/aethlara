@@ -47,6 +47,12 @@ body {
 
 #root { min-height: 100vh; }
 
+/* Toolbar popup (popup.html): popups size to their content, so give the
+   page a fixed size within Chrome's 800x600 limit and scroll inside it. */
+html.popup, html.popup body { width: 400px; height: 590px; }
+html.popup body { min-height: 0; overflow-y: auto; }
+html.popup #root, html.popup .app { min-height: 100%; }
+
 p { margin: 0; }
 a { color: var(--brand); text-decoration: none; }
 a:hover { text-decoration: underline; }

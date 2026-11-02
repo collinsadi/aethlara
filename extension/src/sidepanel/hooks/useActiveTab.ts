@@ -5,7 +5,7 @@ import { sendToTab } from '@/lib/messaging'
 import { isHttpUrl } from '@/lib/util'
 import type { PageInfo } from '@/types'
 
-/** The active tab of the window this side panel belongs to. */
+/** The active tab of the window this popup or side panel belongs to. */
 export function useActiveTab(): { tab: chrome.tabs.Tab | null; refresh: () => void } {
   const [tab, setTab] = useState<chrome.tabs.Tab | null>(null)
 

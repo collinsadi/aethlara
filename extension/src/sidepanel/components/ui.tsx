@@ -119,6 +119,15 @@ export function GearIcon() {
   )
 }
 
+export function PanelIcon() {
+  return (
+    <svg {...iconProps}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M15 4v16" />
+    </svg>
+  )
+}
+
 export function BackIcon() {
   return (
     <svg {...iconProps}>
