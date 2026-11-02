@@ -846,13 +846,16 @@ func (s *Service) ReportResult(ctx context.Context, userID, appID string, r Resu
 		for i := range qs {
 			qs[i].Label = clipText(qs[i].Label, 500)
 		}
+		repeat := app.Status == AppNeedsInput && app.Needs != nil && app.Needs.Reason == reason
 		app.Status = AppNeedsInput
 		app.Needs = &Needs{Reason: reason, Message: clipText(r.Message, 500), Questions: qs, PageURL: clipText(r.PageURL, 2048)}
 		if err := s.repo.SaveApplication(ctx, app); err != nil {
 			return nil, ErrInternal
 		}
-		s.event(ctx, Event{UserID: userID, Kind: EventNeedsInput, Level: "warning", LeadID: &lead.ID, ApplicationID: &app.ID,
-			Message: fmt.Sprintf("%s at %s needs you: %s", lead.Title, lead.Company, needsLabel(reason))})
+		if !repeat { // results are at-least-once; one "needs you" per episode
+			s.event(ctx, Event{UserID: userID, Kind: EventNeedsInput, Level: "warning", LeadID: &lead.ID, ApplicationID: &app.ID,
+				Message: fmt.Sprintf("%s at %s needs you: %s", lead.Title, lead.Company, needsLabel(reason))})
+		}
 	case "failed":
 		msg := clipText(firstNonEmpty(r.Message, "the extension could not complete the form"), 500)
 		app.Status = AppFailed
@@ -865,6 +868,9 @@ func (s *Service) ReportResult(ctx context.Context, userID, appID string, r Resu
 			Message: fmt.Sprintf("Could not submit %s at %s: %s", lead.Title, lead.Company, msg)})
 	case "released":
 		app.Status = AppReady
+		if app.Attempts > 0 {
+			app.Attempts-- // handing a claim back is not a failed attempt
+		}
 		if err := s.repo.SaveApplication(ctx, app); err != nil {
 			return nil, ErrInternal
 		}
