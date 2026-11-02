@@ -26,7 +26,7 @@ export function useTracker() {
   const { data, isLoading, isError } = useJobs({ page_size: 100 })
   const updateStatus = useUpdateJobStatus()
 
-  const jobs = data?.items ?? []
+  const jobs = useMemo(() => data?.items ?? [], [data])
 
   const columns: TrackerColumns = useMemo(() => {
     const cols = Object.fromEntries(

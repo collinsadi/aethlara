@@ -39,7 +39,7 @@ const ACTIVE_STATUSES: JobStatus[] = ['not_applied', 'applied', 'interview', 'of
 const ALL_STATUSES: JobStatus[] = [...ACTIVE_STATUSES, 'rejected', 'withdrawn']
 
 export function Tracker() {
-  const { columns, isLoading, isError, moveJob, isPending, ALL_STATUSES: _ } = useTracker()
+  const { columns, isLoading, isError, moveJob, isPending } = useTracker()
   const [view, setView] = useState<'kanban' | 'list'>('kanban')
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
 
