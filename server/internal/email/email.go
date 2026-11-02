@@ -44,12 +44,12 @@ const otpEmailTmpl = `<!DOCTYPE html>
 var otpTmpl = template.Must(template.New("otp").Parse(otpEmailTmpl))
 
 type Client struct {
-	apiKey       string
-	from         string
-	appName      string
-	devLogOnly   bool
-	httpClient   *http.Client
-	baseURL      string // optional Resend API override (see SetBaseURL)
+	apiKey     string
+	from       string
+	appName    string
+	devLogOnly bool
+	httpClient *http.Client
+	baseURL    string // optional Resend API override (see SetBaseURL)
 }
 
 type sendEmailRequest struct {
