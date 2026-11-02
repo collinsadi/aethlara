@@ -96,6 +96,24 @@ type Config struct {
 	ExtensionTokenExpirySecs    int // handshake token validity (default 60)
 	ExtensionTokenRatePerHour   int // max handshake tokens per user per hour (default 5)
 	DashboardURL                string
+	ExtensionDeviceMaxPerUser   int // active long-lived extension devices per user
+
+	// Autopilot (internal/agent)
+	// AgentMailDomain is the domain (ideally a subdomain such as
+	// agent.example.com) whose MX points at Resend Inbound. Each user gets
+	// <name>@AgentMailDomain as the address the agent applies with. Empty
+	// disables the agent mailbox: applications then use the account email.
+	AgentMailDomain string
+	// ResendWebhookSecret is the "whsec_..." signing secret of the Resend
+	// webhook subscribed to email.received. Empty disables inbound mail.
+	ResendWebhookSecret       string
+	AgentSchedulerEnabled     bool
+	AgentSchedulerIntervalSec int
+	AgentMaxConcurrentRuns    int
+	AgentRunTimeoutMinutes    int
+	AgentMaxLeadsScoredPerRun int
+	AgentSourceCacheMinutes   int
+	AgentClaimLeaseMinutes    int
 }
 
 func Load() (*Config, error) {
@@ -202,6 +220,17 @@ func Load() (*Config, error) {
 		ExtensionTokenExpirySecs:  parseInt("EXTENSION_TOKEN_EXPIRY_SECS", 60),
 		ExtensionTokenRatePerHour: parseInt("EXTENSION_TOKEN_RATE_PER_HOUR", 5),
 		DashboardURL:              optional("DASHBOARD_URL", "http://localhost:3000"),
+		ExtensionDeviceMaxPerUser: parseInt("EXTENSION_DEVICE_MAX_PER_USER", 5),
+
+		AgentMailDomain:           strings.ToLower(strings.TrimSpace(optional("AGENT_MAIL_DOMAIN", ""))),
+		ResendWebhookSecret:       optional("RESEND_WEBHOOK_SECRET", ""),
+		AgentSchedulerEnabled:     parseBool("AGENT_SCHEDULER_ENABLED", true),
+		AgentSchedulerIntervalSec: parseInt("AGENT_SCHEDULER_INTERVAL_SECONDS", 60),
+		AgentMaxConcurrentRuns:    parseInt("AGENT_MAX_CONCURRENT_RUNS", 2),
+		AgentRunTimeoutMinutes:    parseInt("AGENT_RUN_TIMEOUT_MINUTES", 30),
+		AgentMaxLeadsScoredPerRun: parseInt("AGENT_MAX_LEADS_SCORED_PER_RUN", 40),
+		AgentSourceCacheMinutes:   parseInt("AGENT_SOURCE_CACHE_MINUTES", 180),
+		AgentClaimLeaseMinutes:    parseInt("AGENT_CLAIM_LEASE_MINUTES", 15),
 	}
 
 	originsStr := optional("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
