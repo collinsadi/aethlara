@@ -9,6 +9,7 @@
  *   analytics → analytics/dashboard
  *   resumes → resumes/list, resumes/preview/{id}
  *   settings → settings/ai, settings/profile
+ *   extension → extension/devices
  *   agent → agent/overview, agent/profile, agent/sources, agent/events,
  *           agent/leads/{list|detail}, agent/applications/{list|detail},
  *           agent/inbox/{list|detail}, agent/answers
@@ -85,6 +86,10 @@ export const queryKeys = {
     /** Active provider, model overrides, stored keys and provider catalogue. */
     ai:      () => [...queryKeys.settings.all(), 'ai'] as const,
     profile: () => [...queryKeys.settings.all(), 'profile'] as const,
+  },
+  extension: {
+    all:     () => ['extension'] as const,
+    devices: () => [...queryKeys.extension.all(), 'devices'] as const,
   },
   user: {
     all: () => ['user'] as const,
