@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/collinsadi/aethlara/internal/middleware"
 	"github.com/collinsadi/aethlara/pkg/response"
 	"github.com/collinsadi/aethlara/pkg/validator"
@@ -255,7 +257,8 @@ func (h *Handler) GenerateExtensionToken(w http.ResponseWriter, r *http.Request)
 // POST /auth/extension-token/exchange
 func (h *Handler) ExchangeExtensionToken(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		ExtToken string `json:"ext_token"`
+		ExtToken   string `json:"ext_token"`
+		DeviceName string `json:"device_name"`
 	}
 	if !decodeBody(w, r, &body) {
 		return
@@ -265,22 +268,93 @@ func (h *Handler) ExchangeExtensionToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	result, err := h.svc.ExchangeExtensionToken(r.Context(), body.ExtToken)
+	result, err := h.svc.ExchangeExtensionToken(r.Context(), body.ExtToken, body.DeviceName, r.UserAgent())
 	if err != nil {
 		// Generic response — no detail about what failed
 		response.Error(w, http.StatusUnauthorized, response.CodeUnauthorized, "Invalid or expired token.")
 		return
 	}
 
-	response.Success(w, http.StatusOK, map[string]any{
+	response.Success(w, http.StatusOK, extensionAuthBody(result), "")
+}
+
+func extensionAuthBody(result *ExtensionAuthResult) map[string]any {
+	return map[string]any{
 		"access_token": result.AccessToken,
 		"expires_at":   result.ExpiresAt,
+		"device_id":    result.DeviceID,
+		"device_token": result.DeviceToken,
 		"user": map[string]any{
 			"id":        result.User.ID,
 			"full_name": result.User.FullName,
 			"email":     result.User.Email,
 		},
-	}, "")
+	}
+}
+
+// POST /auth/extension/refresh — public; the device token is the credential.
+func (h *Handler) RefreshExtensionDevice(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		DeviceToken string `json:"device_token"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	if body.DeviceToken == "" {
+		response.Error(w, http.StatusBadRequest, response.CodeInvalidInput, "device_token is required.")
+		return
+	}
+	result, err := h.svc.RefreshExtensionDevice(r.Context(), body.DeviceToken, r.UserAgent())
+	if err != nil {
+		if errors.Is(err, ErrExtensionDeviceRotated) {
+			response.Error(w, http.StatusUnauthorized, "DEVICE_TOKEN_ROTATED",
+				"This device token was just replaced; use the newest one.")
+			return
+		}
+		response.Error(w, http.StatusUnauthorized, "DEVICE_REVOKED",
+			"This extension is no longer connected. Reconnect it from the dashboard.")
+		return
+	}
+	response.Success(w, http.StatusOK, extensionAuthBody(result), "")
+}
+
+// GET /auth/extension/devices
+func (h *Handler) ListExtensionDevices(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, response.CodeUnauthorized, "Authentication required.")
+		return
+	}
+	devices, err := h.svc.ListExtensionDevices(r.Context(), userID)
+	if err != nil {
+		response.Error(w, http.StatusInternalServerError, response.CodeInternalError, "An unexpected error occurred.")
+		return
+	}
+	out := make([]map[string]any, 0, len(devices))
+	for _, d := range devices {
+		out = append(out, map[string]any{
+			"id": d.ID, "name": d.Name, "last_used_at": d.LastUsedAt, "created_at": d.CreatedAt,
+		})
+	}
+	response.Success(w, http.StatusOK, out, "")
+}
+
+// DELETE /auth/extension/devices/{id}
+func (h *Handler) RevokeExtensionDevice(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok {
+		response.Error(w, http.StatusUnauthorized, response.CodeUnauthorized, "Authentication required.")
+		return
+	}
+	if err := h.svc.RevokeExtensionDevice(r.Context(), userID, chi.URLParam(r, "id")); err != nil {
+		if errors.Is(err, ErrTokenNotFound) {
+			response.Error(w, http.StatusNotFound, response.CodeNotFound, "Device not found.")
+			return
+		}
+		response.Error(w, http.StatusInternalServerError, response.CodeInternalError, "An unexpected error occurred.")
+		return
+	}
+	response.Success(w, http.StatusOK, nil, "Extension disconnected.")
 }
 
 // ---- helpers ----

@@ -49,6 +49,15 @@ type Repository interface {
 	MarkExtensionTokenUsed(ctx context.Context, id string) error
 	CountRecentExtensionTokens(ctx context.Context, userID string, since time.Time) (int, error)
 
+	// Long-lived extension devices (devices.go)
+	CreateExtensionDevice(ctx context.Context, d ExtensionDevice) (*ExtensionDevice, error)
+	GetExtensionDeviceByToken(ctx context.Context, tokenHash string) (*ExtensionDevice, error)
+	GetExtensionDeviceByPreviousToken(ctx context.Context, tokenHash string) (*ExtensionDevice, error)
+	RotateExtensionDevice(ctx context.Context, id, oldHash, newHash, userAgent string) (bool, error)
+	RevokeExtensionDevice(ctx context.Context, userID, id string) (bool, error)
+	ListExtensionDevices(ctx context.Context, userID string) ([]ExtensionDevice, error)
+	RevokeExcessExtensionDevices(ctx context.Context, userID string, keep int) error
+
 	CleanupExpired(ctx context.Context) error
 }
 

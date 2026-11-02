@@ -65,11 +65,15 @@ type ExtensionTokenResult struct {
 	ExpiresIn int
 }
 
-// ExtensionAuthResult is returned by ExchangeExtensionToken.
+// ExtensionAuthResult is returned by ExchangeExtensionToken and
+// RefreshExtensionDevice. DeviceToken is the long-lived, rotating credential
+// the extension stores to get new access tokens without reconnecting.
 type ExtensionAuthResult struct {
 	AccessToken string
 	ExpiresAt   time.Time
 	User        *user.User
+	DeviceID    string
+	DeviceToken string
 }
 
 type Service interface {
@@ -80,7 +84,10 @@ type Service interface {
 	Logout(ctx context.Context, userID, refreshToken string) error
 	LogoutAll(ctx context.Context, userID string) error
 	GenerateExtensionToken(ctx context.Context, userID, origin string) (*ExtensionTokenResult, error)
-	ExchangeExtensionToken(ctx context.Context, rawToken string) (*ExtensionAuthResult, error)
+	ExchangeExtensionToken(ctx context.Context, rawToken, deviceName, userAgent string) (*ExtensionAuthResult, error)
+	RefreshExtensionDevice(ctx context.Context, rawDeviceToken, userAgent string) (*ExtensionAuthResult, error)
+	ListExtensionDevices(ctx context.Context, userID string) ([]ExtensionDevice, error)
+	RevokeExtensionDevice(ctx context.Context, userID, deviceID string) error
 }
 
 type service struct {
@@ -326,7 +333,7 @@ func (s *service) GenerateExtensionToken(ctx context.Context, userID, origin str
 	return &ExtensionTokenResult{Token: rawToken, ExpiresIn: expiry}, nil
 }
 
-func (s *service) ExchangeExtensionToken(ctx context.Context, rawToken string) (*ExtensionAuthResult, error) {
+func (s *service) ExchangeExtensionToken(ctx context.Context, rawToken, deviceName, userAgent string) (*ExtensionAuthResult, error) {
 	tokenHash := tokenutil.HashToken(rawToken)
 
 	t, err := s.authRepo.GetExtensionToken(ctx, tokenHash)
@@ -356,10 +363,17 @@ func (s *service) ExchangeExtensionToken(ctx context.Context, rawToken string) (
 		return nil, ErrInternal
 	}
 
+	device, deviceToken, err := s.issueDevice(ctx, u.ID, deviceName, userAgent)
+	if err != nil {
+		return nil, err
+	}
+
 	return &ExtensionAuthResult{
 		AccessToken: accessToken,
 		ExpiresAt:   time.Now().Add(expiry),
 		User:        u,
+		DeviceID:    device.ID,
+		DeviceToken: deviceToken,
 	}, nil
 }
 
