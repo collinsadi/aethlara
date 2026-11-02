@@ -74,7 +74,9 @@ export function ApplicationRow({
   // For CAPTCHAs, sign-ins and odd forms the user finishes the job by hand.
   const canMarkSubmitted = app.status === 'needs_input' || app.status === 'failed'
   const ats = atsLabel(app.ats)
-  const email = app.channel === 'email'
+  const cold = app.channel === 'cold_email'
+  const email = app.channel === 'email' || cold
+  const contactHref = cold ? safeHref(app.result?.contact_source) : null
   const score = app.lead.score
   const ref = useRef<HTMLLIElement>(null)
 
@@ -108,7 +110,7 @@ export function ApplicationRow({
             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-muted-foreground">
               <span className="inline-flex items-center gap-1">
                 {email ? <Mail className="size-3" aria-hidden /> : <Puzzle className="size-3" aria-hidden />}
-                {email ? 'Email' : 'Extension'}
+                {cold ? 'Cold email' : email ? 'Email' : 'Extension'}
                 {email && app.apply_email && <span className="break-all text-foreground"> · {app.apply_email}</span>}
                 {!email && ats && <span className="text-foreground"> · {ats}</span>}
               </span>
@@ -155,6 +157,23 @@ export function ApplicationRow({
             </ul>
           )}
         </div>
+      )}
+
+      {cold && app.status === 'submitted' && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          The posting couldn&apos;t be read, so the agent emailed{' '}
+          <span className="break-all font-medium text-foreground">{app.apply_email}</span> directly with your resume
+          {contactHref && (
+            <>
+              {' '}(published on{' '}
+              <a href={contactHref} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-brand">
+                {hostOf(contactHref)}
+              </a>
+              )
+            </>
+          )}
+          .
+        </p>
       )}
 
       {app.status === 'failed' && (
@@ -213,8 +232,8 @@ export function ApplicationRow({
         )}
         {app.has_cover_letter && (
           <button type="button" onClick={() => onCoverLetter(app)} className={ui.outline}>
-            <FileText className="size-3.5" aria-hidden />
-            Cover letter
+            {cold ? <Mail className="size-3.5" aria-hidden /> : <FileText className="size-3.5" aria-hidden />}
+            {cold ? 'Email sent' : 'Cover letter'}
           </button>
         )}
         {!needs && !email && formHref && app.status !== 'submitted' && (

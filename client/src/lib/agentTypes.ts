@@ -19,7 +19,8 @@ export type LeadStatus =
 
 export type DismissReason = 'user' | 'low_score' | 'dealbreaker' | 'cancelled'
 
-export type ApplyChannel = 'browser' | 'email'
+/** `cold_email`: the posting could not be read, so the agent emailed an address the company publishes. */
+export type ApplyChannel = 'browser' | 'email' | 'cold_email'
 
 /** Fit labels produced by the lead-scoring prompt. */
 export type MatchFit = 'strong' | 'good' | 'stretch' | 'poor'
@@ -160,6 +161,8 @@ export interface ApplySettings {
   cover_letters: boolean
   digest_emails: boolean
   important_alerts: boolean
+  /** When a posting can't be read, email an address the company publishes instead of failing. */
+  cold_email_fallback: boolean
 }
 
 export interface AgentProfile {
@@ -354,6 +357,15 @@ export interface ApplicationResult {
   filled?: number
   final_url?: string
   message?: string
+  /** Cold emails (`channel: 'cold_email'`). */
+  kind?: 'cold_email'
+  to?: string
+  contact_kind?: 'hiring' | 'general' | 'person'
+  /** The page the company published the address on. */
+  contact_source?: string
+  subject?: string
+  roles?: string[]
+  reason?: string
 }
 
 export interface AgentApplication {

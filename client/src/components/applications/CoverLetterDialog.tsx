@@ -29,7 +29,9 @@ export function CoverLetterDialog({ application, onOpenChange }: Props) {
         <DialogHeader>
           <div className="flex items-start justify-between gap-3 pr-8">
             <div>
-              <DialogTitle className="text-base font-semibold">Cover letter</DialogTitle>
+              <DialogTitle className="text-base font-semibold">
+                {application?.channel === 'cold_email' ? 'Email sent' : 'Cover letter'}
+              </DialogTitle>
               {application && (
                 <DialogDescription>
                   {application.lead.title} at {application.lead.company}

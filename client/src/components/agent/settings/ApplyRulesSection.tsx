@@ -113,6 +113,18 @@ export function ApplyRulesSection({ profile }: { profile: AgentProfile }) {
         />
         <ToggleRow
           className="p-4"
+          title="Cold-email when a posting can't be read"
+          description="If a posting has closed or can't be found, the agent emails an address the company publishes (careers@, jobs@) with your resume instead of giving up. At most one email per address every two weeks."
+          control={
+            <Switch
+              checked={draft.cold_email_fallback}
+              onCheckedChange={(cold_email_fallback) => patch({ cold_email_fallback })}
+              aria-label="Cold-email when a posting can't be read"
+            />
+          }
+        />
+        <ToggleRow
+          className="p-4"
           title="Digest emails"
           description="A summary to your account email after each run."
           control={
