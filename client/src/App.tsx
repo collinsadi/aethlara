@@ -19,6 +19,7 @@ import { Login } from "@/pages/Login";
 import { Signup } from "@/pages/Signup";
 import { Dashboard } from "@/pages/Dashboard";
 import { Autopilot } from "@/pages/Autopilot";
+import { Review } from "@/pages/Review";
 import { AgentSettings } from "@/pages/AgentSettings";
 import { Resumes } from "@/pages/Resumes";
 import { Jobs } from "@/pages/Jobs";
@@ -78,6 +79,7 @@ export default function App() {
               >
                 <Route path="/agent" element={<Autopilot />} />
                 <Route path="/agent/settings" element={<AgentSettings />} />
+                <Route path="/review" element={<Review />} />
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/resumes" element={<Resumes />} />
                 <Route path="/jobs/new" element={<NewJob />} />
