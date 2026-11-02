@@ -247,6 +247,7 @@ func (s *Service) prefilter(postings []sources.Posting, sp SearchPrefs) []discov
 		excludeRes = append(excludeRes, regexp.MustCompile(`(?i)\b`+regexp.QuoteMeta(k)+`\b`))
 	}
 	types := lowerSet(sp.EmploymentTypes)
+	keywordRes := compileKeywords(sp.Keywords)
 	cutoff := time.Time{}
 	if sp.MaxAgeDays > 0 {
 		cutoff = time.Now().AddDate(0, 0, -sp.MaxAgeDays)
@@ -284,7 +285,7 @@ func (s *Service) prefilter(postings []sources.Posting, sp SearchPrefs) []discov
 			continue
 		}
 		relevance := q.TitleScore(p.Title)
-		hits := keywordHits(p, sp.Keywords)
+		hits := keywordHits(p, keywordRes)
 		if len(sp.Titles) > 0 && relevance < 0.5 && hits == 0 {
 			continue
 		}
@@ -373,18 +374,24 @@ func locationMatches(location string, wanted []string) bool {
 	return false
 }
 
-func keywordHits(p sources.Posting, keywords []string) int {
+func compileKeywords(keywords []string) []*regexp.Regexp {
+	var out []*regexp.Regexp
+	for _, k := range keywords {
+		if k = strings.TrimSpace(k); k != "" {
+			out = append(out, regexp.MustCompile(`(?i)\b`+regexp.QuoteMeta(k)+`\b`))
+		}
+	}
+	return out
+}
+
+func keywordHits(p sources.Posting, keywords []*regexp.Regexp) int {
 	if len(keywords) == 0 {
 		return 0
 	}
-	hay := strings.ToLower(p.Title + " " + strings.Join(p.Tags, " ") + " " + p.Description)
+	hay := p.Title + " " + strings.Join(p.Tags, " ") + " " + p.Description
 	n := 0
-	for _, k := range keywords {
-		k = strings.ToLower(strings.TrimSpace(k))
-		if k == "" {
-			continue
-		}
-		if regexp.MustCompile(`\b` + regexp.QuoteMeta(k) + `\b`).MatchString(hay) {
+	for _, re := range keywords {
+		if re.MatchString(hay) {
 			n++
 		}
 	}
