@@ -498,38 +498,158 @@ curl https://api.example.com/health
 
 ---
 
-## AI / OpenRouter Architecture (Non-Negotiable)
+## AI Provider Architecture (Non-Negotiable)
 
-This platform holds **no platform-level OpenRouter API key**. Every AI call —
-resume extraction, job extraction, resume alignment, tailored-PDF context, and
-job chat — resolves the authenticated user's own encrypted key per request.
+This platform holds **no platform-level AI key** for any provider. Every AI
+call — resume extraction, job extraction, resume alignment, autofill, chat,
+lead scoring, cover letters, inbox triage — resolves the authenticated user's
+own encrypted key per request. Two providers are supported:
+
+| Provider | Key prefix | Transport | Web search |
+|---|---|---|---|
+| `anthropic` | `sk-ant-` | Official Anthropic Go SDK (`anthropic-sdk-go/v2`), streaming Messages API | Yes (server-side `web_search` tool) |
+| `openrouter` | `sk-or-` | OpenAI-compatible `/chat/completions` over HTTPS | No |
+
+Each user has one **active provider** (default `openrouter` for accounts that
+predate multi-provider support) and two model slots:
+
+- **smart** — tailoring, cover letters, application form filling, chat.
+  Defaults: `ANTHROPIC_MODEL` (`claude-opus-5-5`) / `OPENROUTER_MODEL`
+  (`anthropic/claude-opus-5.5`).
+- **fast** — bulk lead scoring and inbox triage. Defaults:
+  `ANTHROPIC_FAST_MODEL` (`claude-haiku-5-5`) / `OPENROUTER_FAST_MODEL`
+  (`anthropic/claude-haiku-5.5`).
 
 **Guarantees:**
-- `OPENROUTER_API_KEY` is NOT a valid environment variable. There is no fallback.
-- Decrypted keys live only inside a single request's stack frame and are zeroed
-  before the function returns.
-- Every AI-dependent endpoint is gated by the `AIGate` middleware which checks
-  `settings.HasValidAPIKey(userID)` before the handler runs.
+- `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` are NOT valid server environment
+  variables. The Anthropic SDK client is built with
+  `option.WithoutEnvironmentDefaults()` so it can never pick up a key, auth
+  token or CLI profile from the host; the user's key is attached per request.
+- Decrypted keys live only inside a single call's stack frame.
+- Every AI-dependent endpoint is gated by the `AIGate` middleware, which
+  checks that the user has a valid key **for their active provider** before
+  the handler runs.
 - Service-level code also validates the key (defence-in-depth) and returns
   `ai.ErrNoAPIKey` if none is available, which handlers map to `403
   API_KEY_REQUIRED`.
+- Anthropic requests on models that support it send the server-side refusal
+  fallback (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`),
+  structured outputs (`output_config.format`) for JSON-shaped stages, and an
+  `effort` hint (`low` for fast-tier work, `medium` otherwise).
 
 **403 shape used for missing / invalid keys:**
 ```json
 {
   "error": {
     "code": "API_KEY_REQUIRED",
-    "message": "An OpenRouter API key is required to use this feature. Add your key in Settings.",
-    "action": { "label": "Add API Key", "path": "/settings#api-key" }
+    "message": "An AI provider API key (Anthropic or OpenRouter) is required to use this feature. Add your key in Settings.",
+    "action": { "label": "Add API Key", "path": "/settings#ai" }
   }
 }
 ```
 
 Endpoints protected by the AI gate:
 - `POST /resumes/upload`
-- `POST /jobs`
+- `POST /jobs`, `POST /jobs/extract-from-extension`, `POST /jobs/:id/autofill`
 - `POST /chat/sessions`
 - `POST /chat/sessions/:session_id/messages`
+
+---
+
+## AI Settings
+
+All endpoints require `Authorization: Bearer <access_token>`.
+
+### GET /settings/ai
+
+**Purpose:** Return the active provider, model overrides, effective models,
+stored keys (metadata only) and the provider catalogue for the settings UI.
+
+**Success `200`:**
+```json
+{
+  "data": {
+    "provider": "anthropic",
+    "smart_model": null,
+    "fast_model": "claude-haiku-5-5",
+    "effective_smart_model": "claude-opus-5-5",
+    "effective_fast_model": "claude-haiku-5-5",
+    "keys": [
+      {
+        "id": "uuid", "provider": "anthropic", "key_prefix": "sk-ant-api03-AbCd",
+        "label": null, "validation_status": "valid",
+        "last_used_at": "2026-11-02T10:00:00Z", "last_validated_at": "2026-11-02T09:00:00Z",
+        "created_at": "2026-11-01T09:00:00Z"
+      }
+    ],
+    "providers": [
+      { "id": "anthropic", "label": "Anthropic", "key_prefix": "sk-ant-", "supports_web_search": true,
+        "suggested_models": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"] },
+      { "id": "openrouter", "label": "OpenRouter", "key_prefix": "sk-or-", "supports_web_search": false,
+        "suggested_models": ["anthropic/claude-opus-5.5", "anthropic/claude-sonnet-5.5", "anthropic/claude-haiku-5.5", "anthropic/claude-fable-5.1"] }
+    ]
+  }
+}
+```
+
+### PUT /settings/ai
+
+**Purpose:** Switch the active provider and/or set model overrides.
+
+**Rate limit:** shared API-key limiter (200/min per user).
+
+**Request body:**
+```json
+{ "provider": "anthropic", "smart_model": "claude-opus-5-5", "fast_model": "" }
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `provider` | string | Yes | `anthropic` or `openrouter`. Must have a valid stored key. |
+| `smart_model` | string | No | Omit to keep the current override (cleared when the provider changes). `""` resets to the server default. 1-100 chars of `[A-Za-z0-9._:/-]`. |
+| `fast_model` | string | No | Same rules as `smart_model`. |
+
+**Errors:** `400 INVALID_INPUT`, `422 PROVIDER_KEY_REQUIRED` (no valid key for that provider).
+
+### POST /settings/api-key
+
+**Purpose:** Validate (live call) and store an encrypted provider key.
+
+**Request body:**
+```json
+{ "api_key": "sk-ant-...", "provider": "anthropic", "label": "personal", "make_active": true }
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `api_key` | string | Yes | Must match the provider prefix; 20-256 chars, no whitespace. |
+| `provider` | string | No | `openrouter` (default, backwards compatible) or `anthropic`. |
+| `label` | string | No | Max 50 chars. |
+| `make_active` | bool | No | Default `true`: switch the active provider to this one. |
+
+**Success `201`:** key metadata (same shape as `keys[]` above).
+**Errors:** `422 INVALID_API_KEY` (bad format or rejected by the provider).
+
+### GET /settings/api-key?provider=
+
+Returns key metadata for `provider` (default: the active provider), or
+`data: null` when none is stored.
+
+### GET /settings/api-keys
+
+Returns metadata for every stored key.
+
+### DELETE /settings/api-key?provider=
+
+Deletes the key for `provider` (default: the active provider). If that was the
+active provider and another valid key exists, the active provider switches to
+it automatically.
+
+### POST /settings/api-key/validate?provider=
+
+Re-runs the liveness check and updates `validation_status`. Anthropic keys
+are checked with a free `GET /v1/models` call; OpenRouter keys with a 16-token
+completion on the fast model.
 
 ---
 
