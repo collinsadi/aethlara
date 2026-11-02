@@ -424,7 +424,27 @@ type Verification struct {
 	ReceivedAt time.Time
 }
 
-var codeRe = regexp.MustCompile(`\b([A-Z0-9]{6,8}|\d{4,8})\b`)
+var codeCandidateRe = regexp.MustCompile(`\b[A-Z0-9]{4,8}\b`)
+
+// findCode returns the first token that looks like a one-time code: all
+// digits (4-8), or 6-8 upper-case letters and digits containing a digit (so
+// shouted words such as "URGENT" are ignored).
+func findCode(text string) string {
+	for _, c := range codeCandidateRe.FindAllString(text, -1) {
+		hasDigit, allDigits := false, true
+		for _, r := range c {
+			if r >= '0' && r <= '9' {
+				hasDigit = true
+			} else {
+				allDigits = false
+			}
+		}
+		if allDigits || (hasDigit && len(c) >= 6) {
+			return c
+		}
+	}
+	return ""
+}
 
 // RecentVerifications returns verification codes/links received since t.
 // Mail not yet triaged is scanned with a simple pattern so the extension
@@ -440,7 +460,7 @@ func (s *Service) RecentVerifications(ctx context.Context, userID string, since 
 		if m.Extracted != nil {
 			v.Code, v.Link = m.Extracted.VerificationCode, m.Extracted.VerificationLink
 		} else if strings.Contains(strings.ToLower(m.Subject+" "+m.TextBody), "code") {
-			if c := codeRe.FindString(m.TextBody); c != "" {
+			if c := findCode(m.TextBody); c != "" {
 				v.Code = &c
 			}
 		}
