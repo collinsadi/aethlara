@@ -120,9 +120,11 @@ export function Privacy() {
           <div className="space-y-4 text-sm text-muted-foreground leading-relaxed">
             <p>
               To generate tailored resumes and match scores, your resume content
-              and job description are sent to a third-party AI provider
-              (OpenRouter). This transmission is necessary to provide the core
-              service.
+              and job description are sent to the third-party AI provider you
+              choose (Anthropic or OpenRouter). If you use the autopilot, the job
+              postings it finds and the replies that arrive in your agent mailbox
+              are processed the same way, so they can be scored and sorted. This
+              transmission is necessary to provide the core service.
             </p>
             <p>
               Raw resume and job text is not logged beyond what is needed to
@@ -133,8 +135,8 @@ export function Privacy() {
               <strong className="text-foreground">
                 If you use your own API key:
               </strong>{" "}
-              Your key is used for the duration of the request and not stored
-              beyond the active session. The AI provider's own privacy policy
+              Your key is stored encrypted at rest and is only decrypted for
+              the duration of each request. The AI provider's own privacy policy
               governs how they process your request.
             </p>
           </div>
