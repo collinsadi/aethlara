@@ -50,7 +50,7 @@ For a local server: `VITE_API_BASE_URL=http://localhost:18080/api/v1 npm run bui
 
 ## How authentication works
 
-1. In the side panel click **Open dashboard to connect**, then **Connect extension** in Settings → Extension.
+1. In the side panel click **Open dashboard to connect**, then **Connect Chrome extension** in Settings → Extension.
 2. The dashboard opens `/extension-handshake?ext_token=…`. The content script on that page passes the single-use token to the service worker, which only accepts it from the configured dashboard origin (any `localhost` port is accepted only by builds whose dashboard is itself on `localhost`), exchanges it at `POST /auth/extension-token/exchange` (sending a device name such as "Chrome on macOS") and closes the tab.
 3. The **device token** is kept in `chrome.storage.local`; the 15-minute **access token** lives in `chrome.storage.session` (memory only, not readable by content scripts).
 4. Access tokens are refreshed about a minute before they expire, and once after a 401, through `POST /auth/extension/refresh`. The device token rotates on every refresh. Refreshes are single-flight within a context and serialised across the side panel and the service worker with the Web Locks API; on `DEVICE_TOKEN_ROTATED` the stored token is re-read and the refresh retried once; on `DEVICE_REVOKED` everything is cleared and the panel shows the sign-in screen.

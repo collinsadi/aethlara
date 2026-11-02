@@ -43,7 +43,7 @@ export function SignInPage({ connect }: { connect: ConnectStatus | null }) {
         <ol className="small muted" style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>
           <li>Open the dashboard and sign in.</li>
           <li>
-            In <span style={{ color: 'var(--fg)' }}>Settings → Extension</span>, click <span style={{ color: 'var(--fg)' }}>Connect extension</span>.
+            In <span style={{ color: 'var(--fg)' }}>Settings → Extension</span>, click <span style={{ color: 'var(--fg)' }}>Connect Chrome extension</span>.
           </li>
           <li>This panel connects on its own. You stay connected until you sign out.</li>
         </ol>
