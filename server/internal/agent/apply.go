@@ -150,18 +150,50 @@ func (s *Service) applyQueued(ctx context.Context, run *Run, p *Profile, resume 
 	if err != nil || user == nil {
 		return fmt.Errorf("load user: %w", err)
 	}
+	// Applications whose posting cannot be read fall back to cold emails,
+	// sent after the loop so several roles at one company share one email.
+	var cold []coldEmailJob
 	for i := range queued {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			break
 		}
-		if err := s.prepareOne(ctx, run, p, user, resume, &queued[i], stats); errors.Is(err, ai.ErrNoAPIKey) {
+		if err := s.prepareOne(ctx, run, p, user, resume, &queued[i], stats, &cold); errors.Is(err, ai.ErrNoAPIKey) {
+			for _, j := range cold {
+				j.app.Status = AppQueued
+				_ = s.repo.SaveApplication(ctx, j.app)
+				_, _ = s.repo.SetLeadStatus(ctx, p.UserID, j.lead.ID, LeadApproved, nil, false)
+			}
 			return err
 		}
 	}
-	return nil
+	if len(cold) > 0 {
+		if err := s.sendColdEmails(ctx, run, p, user, resume, cold, stats); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
 }
 
-func (s *Service) prepareOne(ctx context.Context, run *Run, p *Profile, user *UserBasics, resume *ResumeInfo, app *Application, stats *RunStats) error {
+// maxPrepareAttempts bounds retries of transient failures (AI timeouts,
+// rate limits, provider errors, malformed AI output) across runs.
+const maxPrepareAttempts = 3
+
+// transientPrepareError reports failures worth retrying on the next run.
+func transientPrepareError(err error) bool {
+	if errors.Is(err, job.ErrAIPipelineTimeout) {
+		return true
+	}
+	switch ai.ClassifyError(err) {
+	case "timeout", "ai_rate_limited", "ai_overloaded", "ai_server_error", "ai_truncated":
+		return true
+	}
+	// ErrExtraction without an ExtractionError: the model's reply could not
+	// be parsed (twice) or the provider failed, not an unreadable posting.
+	var ext *job.ExtractionError
+	return errors.Is(err, job.ErrExtraction) && !errors.As(err, &ext)
+}
+
+func (s *Service) prepareOne(ctx context.Context, run *Run, p *Profile, user *UserBasics, resume *ResumeInfo, app *Application, stats *RunStats, cold *[]coldEmailJob) error {
 	log := logger.FromContext(ctx).With("component", "agent", "operation", "prepare", "application_id", app.ID)
 	lead, err := s.repo.GetLead(ctx, p.UserID, app.LeadID)
 	if err != nil || lead == nil {
@@ -170,15 +202,41 @@ func (s *Service) prepareOne(ctx context.Context, run *Run, p *Profile, user *Us
 
 	fail := func(msg string, cause error) error {
 		log.Warn("application prepare failed", "error", logger.TruncateError(cause, 200), "error_type", ai.ClassifyError(cause))
-		app.Status = AppFailed
+		s.failApplication(ctx, run, p.UserID, app, lead, msg, stats)
+		return cause
+	}
+	// retryLater re-queues the application after a transient failure.
+	retryLater := func(msg string, cause error) error {
+		app.Attempts++
+		if app.Attempts >= maxPrepareAttempts {
+			return fail(msg, cause)
+		}
+		log.Warn("application prepare deferred", "error", logger.TruncateError(cause, 200),
+			"error_type", ai.ClassifyError(cause), "attempt", app.Attempts)
+		app.Status = AppQueued
 		app.LastError = &msg
 		_ = s.repo.SaveApplication(ctx, app)
-		_, _ = s.repo.SetLeadStatus(ctx, p.UserID, lead.ID, LeadFailed, nil, false)
-		stats.Failed++
-		s.event(ctx, Event{UserID: p.UserID, RunID: &run.ID, Kind: EventAppFailed, Level: "error",
+		_, _ = s.repo.SetLeadStatus(ctx, p.UserID, lead.ID, LeadApproved, nil, false)
+		s.event(ctx, Event{UserID: p.UserID, RunID: &run.ID, Kind: EventPrepared, Level: "warning",
 			LeadID: &lead.ID, ApplicationID: &app.ID,
-			Message: fmt.Sprintf("Could not prepare %s at %s: %s", lead.Title, lead.Company, msg)})
-		return cause
+			Message: fmt.Sprintf("Couldn't prepare %s at %s yet (%s); trying again on the next run", lead.Title, lead.Company, msg)})
+		return nil
+	}
+	var clues *siteClues
+	// coldEmail hands an application whose posting cannot be read to the
+	// cold email fallback, or fails it when the fallback is off or the
+	// company publishes no usable address.
+	coldEmail := func(msg string, cause error) error {
+		if !p.ApplySettings.ColdEmailFallback || s.agentMail == nil || p.MailboxAddress == nil || *p.MailboxAddress == "" {
+			return fail(msg, cause)
+		}
+		contact := s.findContact(ctx, p.UserID, lead, clues)
+		if contact == nil {
+			return fail(msg+"; no email address published by "+lead.Company+" was found either", cause)
+		}
+		log.Info("posting unreadable, cold email queued", "contact_kind", contact.Kind)
+		*cold = append(*cold, coldEmailJob{app: app, lead: lead, contact: contact, reason: msg})
+		return nil
 	}
 
 	app.Status = AppPreparing
@@ -189,10 +247,15 @@ func (s *Service) prepareOne(ctx context.Context, run *Run, p *Profile, user *Us
 
 	// 1. Make sure we have the full posting.
 	description := lead.Description
-	if len(description) < thinDescriptionChars && isHTTPURL(lead.URL) {
-		if scraped, err := job.ScrapeJob(ctx, lead.URL, s.cfg); err == nil && len(scraped) > len(description) {
-			description = clipText(scraped, 20000)
-			_ = s.repo.SetLeadDescription(ctx, lead.ID, description)
+	if app.JobID == nil && needsResolution(lead) {
+		rp, c := s.resolvePosting(ctx, p.UserID, lead)
+		clues = c
+		if rp != nil {
+			s.adoptPosting(ctx, lead, rp)
+			description = lead.Description
+			log.Info("posting resolved", "via", rp.Via, "chars", len(description))
+		} else if len(strings.TrimSpace(description)) < minPostingChars {
+			return coldEmail("the posting could not be found or read", errPostingUnreadable)
 		}
 	}
 
@@ -213,10 +276,16 @@ func (s *Service) prepareOne(ctx context.Context, run *Run, p *Profile, user *Us
 			ResumeID: resume.ID, JobURL: lead.URL, Title: lead.Title, Company: lead.Company, Description: description,
 		})
 		if err != nil {
-			if errors.Is(err, ai.ErrNoAPIKey) {
+			var ext *job.ExtractionError
+			switch {
+			case errors.Is(err, ai.ErrNoAPIKey):
 				app.Status = AppQueued
 				_ = s.repo.SaveApplication(ctx, app)
 				return err
+			case errors.As(err, &ext):
+				return coldEmail(userFacingError(err), err)
+			case transientPrepareError(err):
+				return retryLater(userFacingError(err), err)
 			}
 			return fail(userFacingError(err), err)
 		}
@@ -231,6 +300,11 @@ func (s *Service) prepareOne(ctx context.Context, run *Run, p *Profile, user *Us
 			s.event(ctx, Event{UserID: p.UserID, RunID: &run.ID, Kind: EventPrepared, Level: "warning",
 				LeadID: &lead.ID, ApplicationID: &app.ID,
 				Message: fmt.Sprintf("%s at %s scored %d against your resume; applying with your original resume", lead.Title, lead.Company, res.MatchScore)})
+		}
+		if res.TailorFailed {
+			s.event(ctx, Event{UserID: p.UserID, RunID: &run.ID, Kind: EventPrepared, Level: "warning",
+				LeadID: &lead.ID, ApplicationID: &app.ID,
+				Message: fmt.Sprintf("Couldn't tailor your resume for %s at %s; applying with your original resume", lead.Title, lead.Company)})
 		}
 	}
 	if jobText == "" {
@@ -298,6 +372,7 @@ func (s *Service) prepareOne(ctx context.Context, run *Run, p *Profile, user *Us
 	app.Status = AppReady
 	app.LastError = nil
 	app.Needs = nil
+	app.Attempts = 0 // prepare retries must not eat into the extension's claim attempts
 	if err := s.repo.SaveApplication(ctx, app); err != nil {
 		return ErrInternal
 	}
@@ -318,13 +393,38 @@ func (s *Service) markSubmitted(ctx context.Context, userID string, lead *Lead, 
 	}
 }
 
+// adoptPosting replaces a lead's thin description and link with the full
+// posting resolvePosting found.
+func (s *Service) adoptPosting(ctx context.Context, lead *Lead, rp *resolvedPosting) {
+	lead.Description = rp.Description
+	if rp.URL != "" {
+		lead.URL = rp.URL
+	}
+	if rp.ApplyURL != "" {
+		lead.ApplyURL = strPtr(rp.ApplyURL)
+	}
+	if rp.ATS != "" {
+		lead.ATS = strPtr(rp.ATS)
+	}
+	if rp.ApplyEmail != "" && (lead.ApplyEmail == nil || *lead.ApplyEmail == "") {
+		lead.ApplyEmail = strPtr(rp.ApplyEmail)
+	}
+	if err := s.repo.UpdateLeadPosting(ctx, lead.ID, rp.Description, rp.URL, rp.ApplyURL, rp.ATS, rp.ApplyEmail); err != nil {
+		slog.Warn("agent: saving resolved posting failed", "lead_id", lead.ID, "error", err)
+	}
+}
+
 func userFacingError(err error) string {
 	var ext *job.ExtractionError
 	switch {
 	case errors.As(err, &ext):
 		return "the posting could not be read (" + strings.ToLower(ext.Reason) + ")"
 	case errors.Is(err, job.ErrAIPipelineTimeout):
-		return "the AI took too long; it will be retried"
+		return "the AI took too long"
+	case errors.Is(err, job.ErrExtraction):
+		return "the AI returned an unreadable reply"
+	case transientPrepareError(err):
+		return "the AI provider was busy"
 	case errors.Is(err, job.ErrInvalidInput):
 		return "the posting or resume is incomplete"
 	case errors.Is(err, ai.ErrRefused):

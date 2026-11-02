@@ -53,6 +53,9 @@ const (
 const (
 	ChannelBrowser = "browser"
 	ChannelEmail   = "email"
+	// ChannelColdEmail: the posting could not be read, so the agent emailed
+	// an address the company publishes, with the original resume.
+	ChannelColdEmail = "cold_email"
 )
 
 // SearchPrefs describes what the agent looks for (agent_profiles.search_prefs).
@@ -120,6 +123,9 @@ type ApplySettings struct {
 	CoverLetters     bool `json:"cover_letters"`
 	DigestEmails     bool `json:"digest_emails"`
 	ImportantAlerts  bool `json:"important_alerts"`
+	// ColdEmailFallback: when a posting cannot be read, email an address
+	// the company publishes instead of failing the application.
+	ColdEmailFallback bool `json:"cold_email_fallback"`
 }
 
 // Profile is the agent configuration for one user.

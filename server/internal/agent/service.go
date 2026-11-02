@@ -32,6 +32,10 @@ type Service struct {
 	fetcher   *sources.Fetcher
 	sources   map[string]sources.Source
 
+	// fetchPage and lookupMX reach the internet; tests replace them.
+	fetchPage func(ctx context.Context, rawURL string) (*job.Page, error)
+	lookupMX  func(ctx context.Context, domain string) bool
+
 	runSem   chan struct{}
 	triageCh chan struct{}
 	wg       sync.WaitGroup
@@ -55,6 +59,10 @@ func NewService(repo *Repository, jobs job.Service, aiClient *ai.Client, mail, a
 		sources:   sources.New(fetcher),
 		runSem:    make(chan struct{}, maxRuns),
 		triageCh:  make(chan struct{}, 1),
+		fetchPage: func(ctx context.Context, rawURL string) (*job.Page, error) {
+			return job.FetchPage(ctx, rawURL, cfg)
+		},
+		lookupMX: hasMX,
 	}
 }
 
@@ -62,11 +70,12 @@ func NewService(repo *Repository, jobs job.Service, aiClient *ai.Client, mail, a
 
 func defaultApplySettings() ApplySettings {
 	return ApplySettings{
-		AutoSubmit:      true,
-		DailyLimit:      15,
-		CoverLetters:    true,
-		DigestEmails:    true,
-		ImportantAlerts: true,
+		AutoSubmit:        true,
+		DailyLimit:        15,
+		CoverLetters:      true,
+		DigestEmails:      true,
+		ImportantAlerts:   true,
+		ColdEmailFallback: true,
 	}
 }
 

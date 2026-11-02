@@ -167,9 +167,38 @@ func (r *Repository) SetLeadJob(ctx context.Context, id, jobID string) error {
 	return err
 }
 
-func (r *Repository) SetLeadDescription(ctx context.Context, id, description string) error {
-	_, err := r.db.Exec(ctx, `UPDATE job_leads SET description = $2, updated_at = NOW() WHERE id = $1`, id, description)
+// UpdateLeadPosting stores the full posting found for a lead whose own
+// description was too thin. Empty values leave a column unchanged.
+func (r *Repository) UpdateLeadPosting(ctx context.Context, id, description, postingURL, applyURL, ats, applyEmail string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE job_leads SET
+		  description = $2,
+		  url         = COALESCE(NULLIF($3, ''), url),
+		  apply_url   = COALESCE(NULLIF($4, ''), apply_url),
+		  ats         = COALESCE(NULLIF($5, ''), ats),
+		  apply_email = COALESCE(apply_email, NULLIF($6, '')),
+		  updated_at  = NOW()
+		WHERE id = $1`, id, description, postingURL, applyURL, ats, applyEmail)
 	return err
+}
+
+// LastColdEmail returns when the user's agent last cold-emailed address
+// (case-insensitive) after since, and the role it was about.
+func (r *Repository) LastColdEmail(ctx context.Context, userID, address string, since time.Time) (*time.Time, string, error) {
+	var at time.Time
+	var title string
+	err := r.db.QueryRow(ctx, `
+		SELECT a.submitted_at, l.title FROM applications a JOIN job_leads l ON l.id = a.lead_id
+		WHERE a.user_id = $1 AND a.channel = 'cold_email' AND a.status = 'submitted'
+		  AND lower(a.apply_email) = lower($2) AND a.submitted_at > $3
+		ORDER BY a.submitted_at DESC LIMIT 1`, userID, address, since).Scan(&at, &title)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	return &at, title, nil
 }
 
 // LeadScoreUpdate is the result of scoring one lead.
