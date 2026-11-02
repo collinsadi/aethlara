@@ -127,6 +127,9 @@ func (s *Service) EnsureProfile(ctx context.Context, userID string) (*Profile, e
 		return nil, ErrInternal
 	}
 	if p != nil {
+		if p.MailboxAddress == nil && s.cfg.AgentMailDomain != "" {
+			s.backfillMailbox(ctx, p)
+		}
 		return p, nil
 	}
 
@@ -169,6 +172,33 @@ func (s *Service) EnsureProfile(ctx context.Context, userID string) (*Profile, e
 		return created, nil
 	}
 	return nil, ErrInternal
+}
+
+// backfillMailbox gives profiles created before AGENT_MAIL_DOMAIN was set
+// their agent address. Best effort: on failure the profile keeps using the
+// account email.
+func (s *Service) backfillMailbox(ctx context.Context, p *Profile) {
+	user, err := s.repo.GetUserBasics(ctx, p.UserID)
+	if err != nil || user == nil {
+		return
+	}
+	for attempt := 0; attempt < 5; attempt++ {
+		addr := s.suggestMailbox(user.FullName, attempt)
+		taken, err := s.repo.MailboxTaken(ctx, addr, p.UserID)
+		if err != nil {
+			return
+		}
+		if taken {
+			continue
+		}
+		p.MailboxAddress = &addr
+		if updated, err := s.repo.UpdateProfile(ctx, *p); err == nil && updated != nil {
+			*p = *updated
+		} else {
+			p.MailboxAddress = nil
+		}
+		return
+	}
 }
 
 // ProfileUpdate is a full replacement of the user-editable profile fields.
