@@ -114,6 +114,9 @@ const (
 	StageApplicationFill  = "application_fill"
 	StageEmailTriage      = "email_triage"
 	StageSearchExtraction = "search_extraction"
+	StageColdEmail        = "cold_email"
+	StagePostingSearch    = "posting_search"
+	StageContactSearch    = "contact_search"
 )
 
 // Credential is a user's resolved provider configuration for one call.
