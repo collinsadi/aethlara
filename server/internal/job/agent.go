@@ -37,6 +37,17 @@ type LeadTailorResult struct {
 	PDFKey       string // tailored PDF object key; "" when none was produced
 }
 
+// LeadRecordInput describes an application the agent sent without a parsed
+// posting, e.g. a cold email to the company.
+type LeadRecordInput struct {
+	ResumeID string
+	JobURL   string
+	Title    string
+	Company  string
+	// Note explains why there is no job breakdown; shown on the job.
+	Note string
+}
+
 // TailoredContext exposes the AI-derived JSON for one job to the agent.
 type TailoredContext struct {
 	Job              *Job
@@ -156,6 +167,35 @@ func (s *service) TailorForLead(ctx context.Context, userID string, in LeadTailo
 	result.Job = final
 	log.Info("lead tailored", "match_score", result.MatchScore, "misaligned", result.Misaligned, "has_pdf", result.PDFKey != "")
 	return result, nil
+}
+
+// RecordLeadApplication creates a tracker job for an application sent
+// without a parsed posting (no AI runs). Extraction is marked failed with
+// in.Note so the job explains why it has no breakdown; the caller moves it
+// to "applied".
+func (s *service) RecordLeadApplication(ctx context.Context, userID string, in LeadRecordInput) (*Job, error) {
+	var jobURL *string
+	if in.JobURL != "" {
+		u := in.JobURL
+		jobURL = &u
+	}
+	j, err := s.repo.Create(ctx, Job{UserID: userID, ResumeID: in.ResumeID, InputMethod: "agent", JobURL: jobURL})
+	if err != nil {
+		return nil, ErrInternal
+	}
+	fields := JobFields{JobTitle: sanitizeField(in.Title), Company: sanitizeField(in.Company)}
+	if err := s.repo.UpdateJobFields(ctx, j.ID, fields); err != nil {
+		return nil, ErrInternal
+	}
+	note := in.Note
+	if note == "" {
+		note = "Applied without a readable posting."
+	}
+	_ = s.repo.UpdateExtractionStatus(ctx, j.ID, "failed", nil, &note)
+	if final, err := s.repo.GetByID(ctx, j.ID, userID); err == nil && final != nil {
+		return final, nil
+	}
+	return j, nil
 }
 
 // GetTailoredContext returns the job with its extracted-job and tailored

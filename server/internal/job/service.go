@@ -82,6 +82,7 @@ type Service interface {
 
 	// Autopilot entry points (see agent.go).
 	TailorForLead(ctx context.Context, userID string, in LeadTailorInput) (*LeadTailorResult, error)
+	RecordLeadApplication(ctx context.Context, userID string, in LeadRecordInput) (*Job, error)
 	GetTailoredContext(ctx context.Context, jobID, userID string) (*TailoredContext, error)
 	DownloadPDF(ctx context.Context, jobID, userID string) ([]byte, error)
 	AdvanceStatus(ctx context.Context, jobID, userID, target string) (*Job, error)
