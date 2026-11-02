@@ -33,6 +33,8 @@
   --font-mono: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
 
   --color-brand: var(--brand);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
   --color-neutral-50: var(--neutral-50);
   --color-neutral-100: var(--neutral-100);
   --color-neutral-200: var(--neutral-200);
@@ -103,6 +105,8 @@
   --accent: var(--neutral-100);
   --accent-foreground: var(--primary);
   --destructive: #dc2626;
+  --success: #15803d;
+  --warning: #b45309;
   --border: var(--neutral-200);
   --input: var(--neutral-200);
   --ring: var(--brand);
@@ -138,6 +142,8 @@
   --accent: var(--neutral-800);
   --accent-foreground: var(--neutral-50);
   --destructive: #f87171;
+  --success: #4ade80;
+  --warning: #fbbf24;
   --border: var(--neutral-800);
   --input: var(--neutral-800);
   --ring: var(--brand);
@@ -391,6 +397,12 @@
     background: rgba(24, 24, 27, 0.65);
     box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 8px 32px rgba(0, 0, 0, 0.35);
   }
+
+  /* Text field. Lives in the components layer so utilities (pl-9, w-auto, …) can override it. */
+  .field-input {
+    @apply w-full rounded-xl border border-border bg-card px-3 text-sm text-foreground placeholder:text-muted-foreground transition-colors;
+    @apply focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20;
+  }
 }
 
 /* Marketing / product surfaces */
@@ -462,11 +474,6 @@
     @apply bg-neutral-100 text-neutral-950;
   }
 
-  .field-input {
-    @apply w-full rounded-xl border border-border bg-card px-3 text-sm text-foreground placeholder:text-muted-foreground transition-colors;
-    @apply focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20;
-  }
-
   /* Light-mode safety net for leftover legacy text tokens */
   html:not(.dark) .text-white {
     color: var(--foreground);
@@ -497,6 +504,15 @@
   }
   html:not(.dark) .text-white\/10 {
     color: color-mix(in srgb, var(--foreground) 10%, white);
+  }
+}
+
+@keyframes autopilot-progress {
+  0% {
+    left: -33%;
+  }
+  100% {
+    left: 100%;
   }
 }
 
