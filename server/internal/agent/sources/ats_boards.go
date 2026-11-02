@@ -289,7 +289,7 @@ func fetchAshby(ctx context.Context, f *Fetcher, ref CompanyRef, q Query) ([]Pos
 			Title:          strings.TrimSpace(j.Title),
 			Company:        company,
 			Location:       j.Location,
-			IsRemote:       j.IsRemote || strings.EqualFold(j.WorkplaceType, "remote") || LooksRemote(j.Location),
+			IsRemote:       ashbyRemote(j),
 			EmploymentType: NormalizeEmploymentType(j.EmploymentType),
 			URL:            j.JobURL,
 			ApplyURL:       firstNonEmpty(j.ApplyURL, strings.TrimRight(j.JobURL, "/")+"/application"),
@@ -312,4 +312,16 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// ashbyRemote trusts workplaceType when Ashby provides it: isRemote is also
+// true for hybrid roles that merely allow some remote days.
+func ashbyRemote(j ashbyJob) bool {
+	switch strings.ToLower(j.WorkplaceType) {
+	case "remote":
+		return true
+	case "hybrid", "onsite", "on-site":
+		return false
+	}
+	return j.IsRemote || LooksRemote(j.Location)
 }

@@ -77,6 +77,24 @@ func TestDetectATS(t *testing.T) {
 	}
 }
 
+func TestNormalizeApplyURL(t *testing.T) {
+	cases := map[string]string{
+		"https://job-boards.greenhouse.io/discord/jobs/123":               "https://job-boards.greenhouse.io/embed/job_app?for=discord&token=123",
+		"https://boards.greenhouse.io/stripe/jobs/8172510?gh_src=x":       "https://job-boards.greenhouse.io/embed/job_app?for=stripe&token=8172510",
+		"https://job-boards.greenhouse.io/embed/job_app?for=a&token=1":    "https://job-boards.greenhouse.io/embed/job_app?for=a&token=1",
+		"https://jobs.lever.co/palantir/abc-123":                          "https://jobs.lever.co/palantir/abc-123/apply",
+		"https://jobs.lever.co/palantir/abc-123/apply":                    "https://jobs.lever.co/palantir/abc-123/apply",
+		"https://jobs.ashbyhq.com/ramp/34413f8d?utm_source=x":             "https://jobs.ashbyhq.com/ramp/34413f8d/application",
+		"https://jobs.ashbyhq.com/ramp/34413f8d/application":              "https://jobs.ashbyhq.com/ramp/34413f8d/application",
+		"https://remotive.com/remote-jobs/software-development/x-2091165": "https://remotive.com/remote-jobs/software-development/x-2091165",
+	}
+	for in, want := range cases {
+		if got := NormalizeApplyURL(in); got != want {
+			t.Errorf("NormalizeApplyURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestNormalizeEmploymentType(t *testing.T) {
 	cases := map[string]string{
 		"FullTime": "full_time", "Full-Time": "full_time", "full_time": "full_time",

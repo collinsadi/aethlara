@@ -84,3 +84,30 @@ func AutoApplySupported(ats string) bool {
 	}
 	return false
 }
+
+// NormalizeApplyURL points known ATS posting pages at their application
+// form: Greenhouse hosted pages become the embeddable form, Lever postings
+// get /apply and Ashby postings /application. Other URLs are returned as is.
+func NormalizeApplyURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return raw
+	}
+	host := strings.ToLower(u.Hostname())
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	switch {
+	case host == "boards.greenhouse.io" || host == "job-boards.greenhouse.io":
+		if len(parts) >= 3 && parts[1] == "jobs" && parts[0] != "embed" {
+			return GreenhouseEmbedURL(parts[0], parts[2])
+		}
+	case host == "jobs.lever.co" || host == "jobs.eu.lever.co":
+		if len(parts) == 2 {
+			return u.Scheme + "://" + u.Host + "/" + parts[0] + "/" + parts[1] + "/apply"
+		}
+	case host == "jobs.ashbyhq.com":
+		if len(parts) == 2 {
+			return u.Scheme + "://" + u.Host + "/" + parts[0] + "/" + parts[1] + "/application"
+		}
+	}
+	return raw
+}
