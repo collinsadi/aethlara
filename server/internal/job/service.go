@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -369,7 +370,7 @@ func (s *service) runExtraction(ctx context.Context, userID, jobID, rawContent s
 		"pipeline_status", "started",
 	)
 
-	aiResp, err := s.ai.Complete(ctx, ai.Request{
+	aiResp, err := s.completeJSON(ctx, log, ai.Request{
 		UserID:        userID,
 		SystemPrompt:  prompts.JobExtractionSystemPrompt(),
 		UserMessage:   rawContent,
@@ -377,7 +378,7 @@ func (s *service) runExtraction(ctx context.Context, userID, jobID, rawContent s
 		Stage:         ai.StageJobExtraction,
 		Tier:          ai.TierFast,
 		JSON:          true,
-	})
+	}, func() any { return &ExtractedJob{} })
 	if err != nil {
 		mapped := mapAIError(err)
 		errMsg := "AI extraction error: " + err.Error()
@@ -445,6 +446,32 @@ func (s *service) runExtraction(ctx context.Context, userID, jobID, rawContent s
 	return &extracted, content, nil
 }
 
+// maxJSONAttempts bounds retries when a model returns malformed JSON. Long
+// replies (a full tailored resume is ~4k tokens) occasionally break JSON
+// syntax; a second sample almost always parses.
+const maxJSONAttempts = 2
+
+// completeJSON runs req and retries when the reply does not decode into the
+// value returned by target. The last reply is returned either way so the
+// caller's own validation reports the failure.
+func (s *service) completeJSON(ctx context.Context, log *slog.Logger, req ai.Request, target func() any) (*ai.Response, error) {
+	for attempt := 1; ; attempt++ {
+		resp, err := s.ai.Complete(ctx, req)
+		if err != nil || attempt >= maxJSONAttempts {
+			return resp, err
+		}
+		if json.Valid([]byte(resp.Content)) && json.Unmarshal([]byte(resp.Content), target()) == nil {
+			return resp, nil
+		}
+		log.Warn("AI returned malformed JSON, retrying",
+			"ai_stage", req.Stage,
+			"attempt", attempt,
+			"tokens_out", resp.TokensOut,
+			"error_type", "ai_invalid_json",
+		)
+	}
+}
+
 // runAlignment tailors the resume to the job. When softDeleteOnMisalign is
 // true (manual job creation) a misaligned job is soft-deleted so it never
 // shows up in the user's list; the autopilot passes false because the user
@@ -464,7 +491,7 @@ func (s *service) runAlignment(ctx context.Context, userID, jobID string, extrac
 
 	userMsg := fmt.Sprintf("--- JOB ---\n%s\n--- RESUME ---\n%s", extractedJobJSON, resumeJSON)
 
-	aiResp, err := s.ai.Complete(ctx, ai.Request{
+	aiResp, err := s.completeJSON(ctx, log, ai.Request{
 		UserID:        userID,
 		SystemPrompt:  prompts.ResumeAlignmentSystemPrompt(),
 		UserMessage:   userMsg,
@@ -474,7 +501,7 @@ func (s *service) runAlignment(ctx context.Context, userID, jobID string, extrac
 		// A full tailored resume plus adaptive thinking can exceed the
 		// default ceiling; calls are streamed, so a high cap is free.
 		MaxTokens: alignmentMaxTokens,
-	})
+	}, func() any { return &AlignmentResult{} })
 	if err != nil {
 		mapped := mapAIError(err)
 		errMsg := "AI alignment error: " + err.Error()
