@@ -78,6 +78,12 @@ type Service interface {
 	Autofill(ctx context.Context, jobID, userID string, req AutofillRequest) (*AutofillResult, error)
 	ExtractFromExtension(ctx context.Context, userID string, req ExtractFromExtensionRequest) (*ExtensionExtractionResult, error)
 	ConfirmFromExtension(ctx context.Context, userID, previewToken string) (*Job, error)
+
+	// Autopilot entry points (see agent.go).
+	TailorForLead(ctx context.Context, userID string, in LeadTailorInput) (*LeadTailorResult, error)
+	GetTailoredContext(ctx context.Context, jobID, userID string) (*TailoredContext, error)
+	DownloadPDF(ctx context.Context, jobID, userID string) ([]byte, error)
+	AdvanceStatus(ctx context.Context, jobID, userID, target string) (*Job, error)
 }
 
 type service struct {
@@ -264,7 +270,7 @@ func (s *service) Create(ctx context.Context, userID string, req CreateJobReques
 	}
 
 	// Stage 7–10: resume alignment AI
-	alignResult, alignJSONStr, err := s.runAlignment(aiCtx, userID, j.ID, extractedJob, extractedJSONStr, *resume.ExtractedJSON)
+	alignResult, alignJSONStr, err := s.runAlignment(aiCtx, userID, j.ID, extractedJob, extractedJSONStr, *resume.ExtractedJSON, true)
 	if err != nil {
 		return nil, err
 	}
@@ -435,7 +441,11 @@ func (s *service) runExtraction(ctx context.Context, userID, jobID, rawContent s
 	return &extracted, content, nil
 }
 
-func (s *service) runAlignment(ctx context.Context, userID, jobID string, extractedJob *ExtractedJob, extractedJobJSON, resumeJSON string) (*AlignmentResult, string, error) {
+// runAlignment tailors the resume to the job. When softDeleteOnMisalign is
+// true (manual job creation) a misaligned job is soft-deleted so it never
+// shows up in the user's list; the autopilot passes false because the user
+// explicitly approved the lead and still wants to apply.
+func (s *service) runAlignment(ctx context.Context, userID, jobID string, extractedJob *ExtractedJob, extractedJobJSON, resumeJSON string, softDeleteOnMisalign bool) (*AlignmentResult, string, error) {
 	log := logger.FromContext(ctx).With(
 		"component", "job",
 		"operation", "runAlignment",
@@ -516,13 +526,16 @@ func (s *service) runAlignment(ctx context.Context, userID, jobID string, extrac
 		score := misErr.MatchScore
 		_ = s.repo.UpdateAlignmentStatus(ctx, jobID, "misaligned", nil, &score, &errMsg)
 
-		// Soft-delete BEFORE returning — job must not appear in the user's list
-		_, _ = s.repo.SoftDelete(ctx, jobID, userID)
+		if softDeleteOnMisalign {
+			// Soft-delete BEFORE returning — job must not appear in the user's list
+			_, _ = s.repo.SoftDelete(ctx, jobID, userID)
+		}
 
-		log.Warn("resume misaligned — soft deleting job",
+		log.Warn("resume misaligned",
 			"pipeline_stage", "align",
 			"pipeline_status", "misaligned",
 			"match_score", misErr.MatchScore,
+			"soft_deleted", softDeleteOnMisalign,
 		)
 		return nil, "", misErr
 	}
