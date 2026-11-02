@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
@@ -83,6 +84,32 @@ func (c *R2Client) PresignURL(ctx context.Context, key string) (url string, expi
 	)
 
 	return req.URL, expiresAt, nil
+}
+
+// Download reads an object fully into memory. maxBytes guards against
+// unexpectedly large objects (resumes and generated PDFs are small).
+func (c *R2Client) Download(ctx context.Context, key string, maxBytes int64) ([]byte, string, error) {
+	out, err := c.s3.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("r2 download %q: %w", key, err)
+	}
+	defer out.Body.Close()
+
+	data, err := io.ReadAll(io.LimitReader(out.Body, maxBytes+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("r2 read %q: %w", key, err)
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, "", fmt.Errorf("r2 object %q exceeds %d bytes", key, maxBytes)
+	}
+	contentType := ""
+	if out.ContentType != nil {
+		contentType = *out.ContentType
+	}
+	return data, contentType, nil
 }
 
 // Delete removes an object from R2. Used by cleanup jobs — not called on soft delete.
