@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/collinsadi/aethlara/internal/agent"
 	"github.com/collinsadi/aethlara/internal/ai"
 	"github.com/collinsadi/aethlara/internal/analytics"
 	"github.com/collinsadi/aethlara/internal/apikey"
@@ -63,6 +64,9 @@ func main() {
 	slog.Info("database migrations up to date")
 
 	emailClient := email.NewClient(cfg.ResendAPIKey, cfg.EmailFromAddress, cfg.EmailFromName, cfg.AppName, cfg.EmailDevLogOnly)
+	if cfg.ResendBaseURL != "" {
+		emailClient.SetBaseURL(cfg.ResendBaseURL)
+	}
 	if cfg.EmailDevLogOnly {
 		slog.Warn("EMAIL_DEV_LOG_ONLY is enabled: OTPs are logged to stdout and not sent via Resend")
 	}
@@ -105,6 +109,7 @@ func main() {
 	analyticsRepo := analytics.NewRepository(db.Pool)
 	settingsRepo := settings.NewRepository(db.Pool)
 	chatRepo := chat.NewRepository(db.Pool)
+	agentRepo := agent.NewRepository(db.Pool)
 
 	// Services
 	authSvc := auth.NewService(authRepo, userRepo, emailClient, cfg)
@@ -114,6 +119,7 @@ func main() {
 	analyticsSvc := analytics.NewService(analyticsRepo)
 	settingsSvc := settings.NewService(settingsRepo, userRepo, apiKeySvc, aiClient, emailClient, cfg)
 	chatSvc := chat.NewService(chatRepo, aiClient, cfg)
+	agentSvc := agent.NewService(agentRepo, jobSvc, aiClient, emailClient, r2Client, cfg)
 
 	// Wire per-user credential provider into the AI client after the settings
 	// service is ready.
@@ -127,6 +133,7 @@ func main() {
 	analyticsHandler := analytics.NewHandler(analyticsSvc)
 	settingsHandler := settings.NewHandler(settingsSvc)
 	chatHandler := chat.NewHandler(chatSvc)
+	agentHandler := agent.NewHandler(agentSvc)
 
 	// Router
 	r := chi.NewRouter()
@@ -150,6 +157,7 @@ func main() {
 		analytics.RegisterRoutes(r, analyticsHandler, cfg)
 		settings.RegisterRoutes(r, settingsHandler, cfg)
 		chat.RegisterRoutes(r, chatHandler, cfg, aiGate)
+		agent.RegisterRoutes(r, agentHandler, cfg, aiGate)
 	})
 
 	srv := &http.Server{
@@ -162,6 +170,16 @@ func main() {
 
 	cleanupCtx, cancelCleanup := context.WithCancel(context.Background())
 	defer cancelCleanup()
+
+	// Autopilot: scheduler + inbox triage workers.
+	agentCtx, cancelAgent := context.WithCancel(context.Background())
+	defer cancelAgent()
+	agentSvc.Start(agentCtx)
+	if cfg.AgentMailDomain == "" {
+		slog.Warn("AGENT_MAIL_DOMAIN is not set: agent mailboxes are disabled and applications use account emails")
+	} else if cfg.ResendWebhookSecret == "" {
+		slog.Warn("RESEND_WEBHOOK_SECRET is not set: inbound agent mail is disabled")
+	}
 	go func() {
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
@@ -198,6 +216,17 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("graceful shutdown failed", "error", err)
 		os.Exit(1)
+	}
+
+	// Stop the autopilot; in-flight runs are cancelled and recorded as failed
+	// on the next start if they cannot finish.
+	cancelAgent()
+	done := make(chan struct{})
+	go func() { agentSvc.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-shutdownCtx.Done():
+		slog.Warn("autopilot workers did not stop before the shutdown deadline")
 	}
 	slog.Info("server stopped")
 }
