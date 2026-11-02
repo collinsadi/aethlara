@@ -1,22 +1,5 @@
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
-
-export type Theme = "light" | "dark" | "system";
-type ResolvedTheme = "light" | "dark";
-
-interface ThemeContextValue {
-  theme: Theme;
-  resolvedTheme: ResolvedTheme;
-  setTheme: (theme: Theme) => void;
-}
-
-const ThemeContext = createContext<ThemeContextValue | null>(null);
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { ThemeContext, type ResolvedTheme, type Theme } from "@/hooks/useTheme";
 
 const STORAGE_KEY = "aethlara_theme";
 
@@ -86,12 +69,4 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
-}
-
-export function useTheme() {
-  const context = useContext(ThemeContext);
-  if (!context) {
-    throw new Error("useTheme must be used within a ThemeProvider");
-  }
-  return context;
 }
