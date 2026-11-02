@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/collinsadi/aethlara/internal/ai"
 	"github.com/collinsadi/aethlara/internal/logger"
 )
 
@@ -25,11 +26,15 @@ type LeadTailorInput struct {
 // LeadTailorResult is what the agent needs to apply.
 type LeadTailorResult struct {
 	Job        *Job
-	Tailored   *TailoredResume // nil when misaligned
+	Tailored   *TailoredResume // nil when misaligned or tailoring failed
 	MatchScore int
 	Misaligned bool
-	Reason     string
-	PDFKey     string // tailored PDF object key; "" when none was produced
+	// TailorFailed means the posting was read but tailoring the resume
+	// failed (malformed AI output twice, a provider error or a timeout).
+	// The job is kept and the agent applies with the original resume.
+	TailorFailed bool
+	Reason       string
+	PDFKey       string // tailored PDF object key; "" when none was produced
 }
 
 // TailoredContext exposes the AI-derived JSON for one job to the agent.
@@ -109,8 +114,15 @@ func (s *service) TailorForLead(ctx context.Context, userID string, in LeadTailo
 		result.Misaligned = true
 		result.MatchScore = misErr.MatchScore
 		result.Reason = misErr.Reason
-	default:
+	case errors.Is(err, ai.ErrNoAPIKey):
 		return nil, err
+	default:
+		// The posting parsed fine; only tailoring failed. Keep the job so the
+		// agent can still apply, with the original resume.
+		log.Warn("tailoring failed, continuing with the original resume",
+			"error", logger.TruncateError(err, 200), "error_type", ai.ClassifyError(err))
+		result.TailorFailed = true
+		result.Reason = err.Error()
 	}
 
 	if result.Tailored != nil {
