@@ -150,7 +150,7 @@ export type JobStatus =
   | 'rejected'
   | 'withdrawn'
 
-export type InputMethod = 'url' | 'text'
+export type InputMethod = 'url' | 'text' | 'extension' | 'agent'
 export type ExtractionStatus = 'pending' | 'processing' | 'completed' | 'failed'
 export type AlignmentStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'misaligned'
 
