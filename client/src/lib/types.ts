@@ -245,6 +245,12 @@ export interface ApiSuccessResponse<T = unknown> {
   message?: string;
 }
 
+/** Suggested next step the server attaches to some errors (e.g. API_KEY_REQUIRED). */
+export interface ApiErrorAction {
+  label: string;
+  path: string;
+}
+
 export interface ApiErrorResponse {
   error: {
     code: string;
@@ -255,6 +261,7 @@ export interface ApiErrorResponse {
      * …). Callers should narrow via the typed guards in `@/lib/apiError`.
      */
     data?: Record<string, unknown> | null;
+    action?: ApiErrorAction | null;
   };
 }
 
@@ -273,6 +280,8 @@ export interface ApiError {
   data?: Record<string, unknown> | null;
   /** Retry-After header value in seconds, for 429 responses. */
   retryAfter?: number | null;
+  /** Server-suggested next step, preserved verbatim (e.g. `/settings#ai`). */
+  action?: ApiErrorAction | null;
 }
 
 // ─── Mismatch payload (RESUME_MISALIGNED / 422) ─────────────────────────────

@@ -118,11 +118,12 @@ apiClient.interceptors.response.use(
 
 // ── Error normalisation ──────────────────────────────────────────────
 //
-// CRITICAL: this function MUST preserve the full `error.data` payload from
-// the server, verbatim. Downstream features (mismatch modal, API-key CTA,
-// rate limit toasts) rely on structured data and type guards in
-// `@/lib/apiError`. Never flatten a server error into a plain `Error` — a
-// lost `data` field breaks the mismatch modal silently.
+// CRITICAL: this function MUST preserve the full `error.data` payload (and
+// the optional `error.action` hint) from the server, verbatim. Downstream
+// features (mismatch modal, API-key CTA, rate limit toasts) rely on
+// structured data and type guards in `@/lib/apiError`. Never flatten a
+// server error into a plain `Error` — a lost `data` field breaks the
+// mismatch modal silently.
 function normalizeError(error: AxiosError<ApiErrorResponse>): ApiError {
   const requestId =
     (error.response?.headers?.["x-request-id"] as string | undefined) ??
@@ -145,6 +146,7 @@ function normalizeError(error: AxiosError<ApiErrorResponse>): ApiError {
       data: serverErr.data ?? null,
       requestId,
       ...(Number.isFinite(retryAfter) ? { retryAfter } : {}),
+      ...(serverErr.action ? { action: serverErr.action } : {}),
     };
   }
 

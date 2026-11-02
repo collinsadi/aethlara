@@ -101,3 +101,48 @@ export function apiErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return "Something went wrong. Please try again.";
 }
+
+/** True if `error` is a normalised ApiError carrying `code`. */
+export function hasErrorCode(error: unknown, code: string): error is ApiError {
+  return isApiError(error) && error.code === code;
+}
+
+/**
+ * Like `apiErrorMessage`, but tidied for inline display: validation errors
+ * from the agent/settings services arrive as "invalid input: <reason>", so
+ * the prefix is dropped and the first letter capitalised.
+ */
+export function friendlyErrorMessage(error: unknown): string {
+  return tidyErrorText(apiErrorMessage(error));
+}
+
+/** Drops the "invalid input:" prefix and capitalises a raw server error string. */
+export function tidyErrorText(raw: string): string {
+  const stripped = raw.trim().replace(/^invalid input:\s*/i, "");
+  if (!stripped) return "Something went wrong. Please try again.";
+  return stripped.charAt(0).toUpperCase() + stripped.slice(1);
+}
+
+/** Where the AI-provider settings live (server `action.path` for API_KEY_REQUIRED). */
+export const AI_SETTINGS_PATH = "/settings#ai";
+
+/**
+ * Next step for an error, if there is an obvious one. Prefers the server's
+ * `action` hint; falls back to known codes so older servers still get a CTA.
+ */
+export function errorAction(
+  error: unknown
+): { label: string; path: string } | null {
+  if (!isApiError(error)) return null;
+  if (error.action?.path) {
+    return { label: error.action.label || "Fix this", path: error.action.path };
+  }
+  switch (error.code) {
+    case "API_KEY_REQUIRED":
+      return { label: "Add API key", path: AI_SETTINGS_PATH };
+    case "RESUME_REQUIRED":
+      return { label: "Upload a resume", path: "/resumes" };
+    default:
+      return null;
+  }
+}
