@@ -142,6 +142,7 @@ func (s *service) processExtraction(ctx context.Context, userID, resumeID string
 		PromptVersion: prompts.ResumeExtractionV1,
 		Stage:         ai.StageResumeExtraction,
 		JSON:          true,
+		MaxTokens:     24000, // long resumes + thinking; streamed, so a high cap is free
 	})
 	if err != nil {
 		return "", fmt.Errorf("ai extraction: %w", err)

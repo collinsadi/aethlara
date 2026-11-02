@@ -97,6 +97,10 @@ func NewService(repo Repository, r2 *storage.R2Client, aiClient *ai.Client, cfg 
 	return &service{repo: repo, r2: r2, ai: aiClient, cfg: cfg}
 }
 
+// alignmentMaxTokens is the output ceiling for resume alignment (the
+// tailored resume JSON is the largest output the platform asks for).
+const alignmentMaxTokens = 32000
+
 // aiContext returns a context that is decoupled from the inbound HTTP
 // request lifetime and has its own JobAITimeoutSeconds deadline.
 //
@@ -467,6 +471,9 @@ func (s *service) runAlignment(ctx context.Context, userID, jobID string, extrac
 		PromptVersion: prompts.ResumeAlignmentV1,
 		Stage:         ai.StageResumeAlignment,
 		JSON:          true,
+		// A full tailored resume plus adaptive thinking can exceed the
+		// default ceiling; calls are streamed, so a high cap is free.
+		MaxTokens: alignmentMaxTokens,
 	})
 	if err != nil {
 		mapped := mapAIError(err)
@@ -1047,6 +1054,9 @@ func (s *service) ExtractFromExtension(ctx context.Context, userID string, req E
 		PromptVersion: prompts.ResumeAlignmentV1,
 		Stage:         ai.StageResumeAlignment,
 		JSON:          true,
+		// A full tailored resume plus adaptive thinking can exceed the
+		// default ceiling; calls are streamed, so a high cap is free.
+		MaxTokens: alignmentMaxTokens,
 	})
 	if err != nil {
 		if errors.Is(err, ai.ErrNoAPIKey) {
