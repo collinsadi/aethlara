@@ -367,6 +367,13 @@ func (r *Repository) SaveApplication(ctx context.Context, a *Application) error 
 	return err
 }
 
+// DeleteApplication removes an application that never started (undoing
+// an approval).
+func (r *Repository) DeleteApplication(ctx context.Context, userID, id string) error {
+	_, err := r.db.Exec(ctx, `DELETE FROM applications WHERE user_id = $1 AND id = $2 AND status IN ('queued', 'cancelled')`, userID, id)
+	return err
+}
+
 // ClaimBrowserApplication leases the next ready browser application (or one
 // whose lease expired) to the extension. Returns nil when none is waiting.
 func (r *Repository) ClaimBrowserApplication(ctx context.Context, userID string, lease time.Duration) (*Application, error) {

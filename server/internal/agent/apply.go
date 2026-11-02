@@ -84,7 +84,23 @@ func (s *Service) DecideLead(ctx context.Context, userID, leadID, decision strin
 		return updated, app, nil
 
 	case "reset":
-		if lead.Status != LeadDismissed && lead.Status != LeadExpired {
+		switch lead.Status {
+		case LeadDismissed, LeadExpired:
+		case LeadApproved:
+			// Undo an approval while its application is still only queued.
+			app, err := s.repo.GetApplicationByLead(ctx, userID, leadID)
+			if err != nil {
+				return nil, nil, ErrInternal
+			}
+			if app != nil {
+				if app.Status != AppQueued && app.Status != AppCancelled {
+					return nil, nil, fmt.Errorf("%w: the agent already started this application", ErrInvalidInput)
+				}
+				if err := s.repo.DeleteApplication(ctx, userID, app.ID); err != nil {
+					return nil, nil, ErrInternal
+				}
+			}
+		default:
 			return lead, nil, nil
 		}
 		updated, err := s.repo.SetLeadStatus(ctx, userID, leadID, LeadNew, nil, false)
