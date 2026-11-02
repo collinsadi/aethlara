@@ -21,7 +21,6 @@ import { Dashboard } from "@/pages/Dashboard";
 import { Resumes } from "@/pages/Resumes";
 import { Jobs } from "@/pages/Jobs";
 import { NewJob } from "@/pages/NewJob";
-import { JobDetail } from "@/pages/JobDetail";
 import { Tracker } from "@/pages/Tracker";
 import { Settings } from "@/pages/Settings";
 import { ExtensionHandshake } from "@/pages/ExtensionHandshake";
@@ -77,9 +76,9 @@ export default function App() {
               >
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/resumes" element={<Resumes />} />
-                <Route path="/jobs" element={<Jobs />} />
                 <Route path="/jobs/new" element={<NewJob />} />
-                <Route path="/jobs/:jobId" element={<JobDetail />} />
+                {/* One route for the list and its deep-linked detail drawer, so the list stays mounted. */}
+                <Route path="/jobs/:jobId?" element={<Jobs />} />
                 <Route path="/tracker" element={<Tracker />} />
                 <Route path="/settings" element={<Settings />} />
               </Route>

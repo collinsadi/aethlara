@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Plus, Search, Briefcase, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useJobs } from '@/hooks/useJobs'
@@ -25,9 +25,19 @@ const PAGE_SIZE = 12
 
 export function Jobs() {
   const [searchParams, setSearchParams] = useSearchParams()
+  // /jobs/:jobId deep-links straight into the detail drawer (links from
+  // Applications, Inbox and Review use it).
+  const { jobId: selectedJobId = null } = useParams<{ jobId?: string }>()
+  const navigate = useNavigate()
   const [createOpen, setCreateOpen] = useState(false)
-  const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const [chatJobId, setChatJobId] = useState<string | null>(null)
+  const setSelectedJobId = useCallback(
+    (id: string | null) => {
+      const query = searchParams.toString()
+      navigate(`/jobs${id ? `/${id}` : ''}${query ? `?${query}` : ''}`)
+    },
+    [navigate, searchParams]
+  )
   const [searchInput, setSearchInput] = useState(searchParams.get('search') ?? '')
 
   const page = Number(searchParams.get('page') ?? '1')

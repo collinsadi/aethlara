@@ -9,6 +9,7 @@ import { ALLOWED_TRANSITIONS } from '@/lib/types'
 import type { JobStatus } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { sanitiseResumeText } from '@/lib/sanitise'
+import { ErrorState } from '@/components/ErrorState'
 
 interface Props {
   jobId: string | null
@@ -35,7 +36,7 @@ const STATUS_COLORS: Record<JobStatus, string> = {
 }
 
 export function JobDetailDrawer({ jobId, onClose, onOpenChat }: Props) {
-  const { data: job, isLoading } = useJobDetail(jobId)
+  const { data: job, isLoading, isError, error, refetch } = useJobDetail(jobId)
   const updateStatus = useUpdateJobStatus()
   const deleteJob = useDeleteJob()
   const [fetchPDF, setFetchPDF] = useState(false)
@@ -76,7 +77,7 @@ export function JobDetailDrawer({ jobId, onClose, onOpenChat }: Props) {
             className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-md glass-strong border-l border-border overflow-y-auto"
           >
             {/* Header */}
-            <div className="sticky top-0 z-10 bg-[var(--tf-surface-dark)]/90 dark:bg-[var(--tf-surface-dark)]/90 backdrop-blur-md flex items-center justify-between px-5 py-4 border-b border-border">
+            <div className="sticky top-0 z-10 bg-card/90 backdrop-blur-md flex items-center justify-between px-5 py-4 border-b border-border">
               <h2 className="text-base font-semibold text-foreground font-heading truncate pr-4">
                 Job Details
               </h2>
@@ -96,6 +97,15 @@ export function JobDetailDrawer({ jobId, onClose, onOpenChat }: Props) {
                   <div key={w} className={`h-4 rounded bg-muted animate-pulse`} style={{ width: `${w}%` }} />
                 ))}
               </div>
+            )}
+
+            {isError && !job && (
+              <ErrorState
+                compact
+                error={error}
+                title="Couldn't load this job"
+                onRetry={() => refetch()}
+              />
             )}
 
             {job && (
