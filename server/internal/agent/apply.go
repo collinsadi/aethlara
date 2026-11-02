@@ -500,20 +500,40 @@ type Packet struct {
 	AutoSubmit  bool
 }
 
+// maxClaimAttempts stops an application the extension keeps abandoning
+// (crashed tab, hung page) from being retried forever.
+const maxClaimAttempts = 5
+
 // ClaimNext leases the next ready browser application to the extension.
 func (s *Service) ClaimNext(ctx context.Context, userID string) (*Packet, error) {
 	lease := time.Duration(s.cfg.AgentClaimLeaseMinutes) * time.Minute
 	if lease <= 0 {
 		lease = 15 * time.Minute
 	}
-	app, err := s.repo.ClaimBrowserApplication(ctx, userID, lease)
-	if err != nil {
-		return nil, ErrInternal
+	for range 3 {
+		app, err := s.repo.ClaimBrowserApplication(ctx, userID, lease)
+		if err != nil {
+			return nil, ErrInternal
+		}
+		if app == nil {
+			return nil, nil
+		}
+		if app.Attempts > maxClaimAttempts {
+			msg := fmt.Sprintf("the extension could not finish this application after %d attempts", maxClaimAttempts)
+			app.Status = AppFailed
+			app.LastError = &msg
+			app.ClaimExpiresAt = nil
+			if err := s.repo.SaveApplication(ctx, app); err != nil {
+				return nil, ErrInternal
+			}
+			_, _ = s.repo.SetLeadStatus(ctx, userID, app.LeadID, LeadFailed, nil, false)
+			s.event(ctx, Event{UserID: userID, Kind: EventAppFailed, Level: "error", LeadID: &app.LeadID, ApplicationID: &app.ID,
+				Message: fmt.Sprintf("Gave up on %s at %s: %s", app.LeadTitle, app.LeadCompany, msg)})
+			continue
+		}
+		return s.packet(ctx, userID, app)
 	}
-	if app == nil {
-		return nil, nil
-	}
-	return s.packet(ctx, userID, app)
+	return nil, nil
 }
 
 // PacketFor returns the packet for an application the extension already holds.
