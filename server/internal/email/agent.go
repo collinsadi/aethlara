@@ -14,7 +14,20 @@ import (
 	"time"
 )
 
-const resendAPI = "https://api.resend.com"
+const defaultResendAPI = "https://api.resend.com"
+
+// SetBaseURL points the client at a Resend-compatible API (proxies, local
+// mocks). Empty keeps the default.
+func (c *Client) SetBaseURL(u string) {
+	c.baseURL = strings.TrimRight(u, "/")
+}
+
+func (c *Client) apiBase() string {
+	if c.baseURL != "" {
+		return c.baseURL
+	}
+	return defaultResendAPI
+}
 
 // Attachment is a file sent with an outbound email.
 type Attachment struct {
@@ -174,7 +187,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]by
 	if body != nil {
 		reader = bytes.NewReader(body)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, resendAPI+path, reader)
+	req, err := http.NewRequestWithContext(ctx, method, c.apiBase()+path, reader)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

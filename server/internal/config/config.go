@@ -35,6 +35,7 @@ type Config struct {
 	TrustedProxies     []string
 
 	ResendAPIKey     string
+	ResendBaseURL    string // optional; defaults to https://api.resend.com
 	EmailFromAddress string
 	EmailFromName    string
 	// EmailDevLogOnly skips Resend and logs OTP to stdout (local development only).
@@ -175,6 +176,7 @@ func Load() (*Config, error) {
 		RateLimitBurst:             parseInt("RATE_LIMIT_BURST", 60),
 		BcryptCost:                 parseInt("BCRYPT_COST", 12),
 		ResendAPIKey:               required("RESEND_API_KEY"),
+		ResendBaseURL:              optional("RESEND_BASE_URL", ""),
 		EmailFromAddress:           optional("EMAIL_FROM_ADDRESS", "noreply@example.com"),
 		EmailFromName:              optional("EMAIL_FROM_NAME", optional("APP_NAME", "App")),
 		EmailDevLogOnly:            parseBool("EMAIL_DEV_LOG_ONLY", false),

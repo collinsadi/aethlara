@@ -49,6 +49,7 @@ type Client struct {
 	appName      string
 	devLogOnly   bool
 	httpClient   *http.Client
+	baseURL      string // optional Resend API override (see SetBaseURL)
 }
 
 type sendEmailRequest struct {
@@ -124,7 +125,7 @@ func (c *Client) send(ctx context.Context, to, subject, html string) error {
 		return fmt.Errorf("marshal email payload: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.resend.com/emails", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiBase()+"/emails", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
