@@ -13,10 +13,7 @@
     "sidePanel",
     "notifications"
   ],
-  "host_permissions": [
-    "https://aethlara-api.collinsadi.xyz/*",
-    "http://localhost:8081/*"
-  ],
+  "host_permissions": [],
   "background": {
     "service_worker": "background/index.js"
   },

@@ -23,9 +23,10 @@ const DEFAULT_API_BASE_URL = 'https://aethlara-api.collinsadi.xyz/api/v1'
 
 /**
  * The extension only needs host access to its own API. The API origin is
- * derived from VITE_API_BASE_URL at build time and merged into the static
- * host_permissions list, so self-hosted and local builds
- * (e.g. http://localhost:18080/api/v1) work without editing manifest.json.
+ * derived from VITE_API_BASE_URL at build time and merged into
+ * host_permissions (empty in manifest.json), so every build, hosted,
+ * self-hosted or local (e.g. http://localhost:18080/api/v1), gets exactly
+ * its own API and nothing else, without editing manifest.json.
  */
 function apiHostPermission(apiBaseUrl: string): string | null {
   try {
