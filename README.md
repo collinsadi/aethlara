@@ -72,7 +72,7 @@ Aethlara is an open-source job-hunting agent. Upload your resume and tell it wha
 - **Tailored PDF resumes + match scoring** — per job, stored on Cloudflare R2
 - **Kanban tracker + analytics** — updated automatically by the agent
 - **Per-job AI chat** — strategy, interview prep, cover letter drafting
-- **Chrome extension** — long-lived revocable device auth, autopilot runner, side panel, ATS-aware form filling with resume upload
+- **Chrome extension** — long-lived revocable device auth, autopilot runner, popup and side panel, ATS-aware form filling with resume upload
 - **Passwordless OTP auth**, encrypted API keys, light and dark mode
 
 ---
@@ -121,7 +121,7 @@ aethlara/
 │   ├── src/
 │   │   ├── background/       # Service worker (device auth, API client, autopilot runner, tabs)
 │   │   ├── content/          # Content script (form detection and filling, ATS adapters, submit flow)
-│   │   ├── sidepanel/        # React side panel (Autopilot, Review, This page, Settings)
+│   │   ├── sidepanel/        # React UI for the popup and side panel (Autopilot, Review, This page, Settings)
 │   │   ├── types/            # API, runner and message contracts
 │   │   └── lib/              # Shared utilities (config, storage, messaging, queryClient)
 │   ├── manifest.json         # Manifest v3 declaration
@@ -223,7 +223,7 @@ The `extension/` folder contains the Aethlara Chrome extension (Manifest V3, v2)
 
 - **Applies for the autopilot** — While *Apply automatically* is on, it checks the queue on a schedule (or right away with *Apply now*), opens each approved application in a background tab, fills it with the answers the server prepared, attaches your tailored resume and cover letter, and submits. Greenhouse, Lever and Ashby have dedicated adapters; a generic adapter handles other forms.
 - **Stops when it should** — CAPTCHAs, sign-in walls, questions only you can answer and unexpected redirects pause the application with a notification. Answer in the dashboard and it carries on; emailed security codes are read from the agent mailbox automatically.
-- **Side panel** — *Autopilot* (status, queue, live progress), *Review* (approve or dismiss new leads) and *This page* (send the posting to the agent, fill the open form, or extract the job into your tracker).
+- **Popup and side panel** — *Autopilot* (status, queue, live progress), *Review* (approve or dismiss new leads) and *This page* (send the posting to the agent, fill the open form, or extract the job into your tracker).
 - **Stays connected** — A one-time, 60-second handshake from the dashboard gives the extension a rotating device token, so it stays signed in across browser restarts. Disconnect it any time from **Settings → Extension**.
 - **Scoped access** — Host permission for the Aethlara API only. The content script runs on every page so it can fill forms on any job site, but it never calls the API and never sees tokens.
 
@@ -236,8 +236,8 @@ The packaged extension lives at [`client/public/downloadable/aethlara-extension-
 3. Open your browser's extensions page (`chrome://extensions`, `brave://extensions`, `edge://extensions`, or `arc://extensions`).
 4. Enable **Developer mode** (top-right toggle).
 5. Click **Load unpacked** and select the unzipped folder (the one that directly contains `manifest.json`).
-6. Pin the Aethlara icon to your toolbar via the puzzle-piece menu; clicking it opens the side panel.
-7. Click **Open dashboard to connect** in the side panel, then **Connect Chrome extension** in **Settings → Extension**.
+6. Pin the Aethlara icon to your toolbar via the puzzle-piece menu; clicking it opens Aethlara. In Chrome, Brave and Edge the panel button at the top moves it into the side panel.
+7. Click **Open dashboard to connect** in the popup, then **Connect Chrome extension** in **Settings → Extension**.
 
 Upgrading from v1? Remove the old extension first so you don't end up with two copies. Chrome 116 or newer is required.
 
