@@ -4,7 +4,7 @@ The hands of the Aethlara autopilot. The server finds jobs and scores them; you 
 
 ## What it does
 
-- **Side panel**: click the toolbar icon to open it next to any tab.
+- **Popup and side panel**: click the toolbar icon to open Aethlara as a popup (every Chromium browser, including Arc). In browsers with extension side panels (Chrome, Brave, Edge), the panel button in its header moves it into the side panel next to the page.
   - **Autopilot**: agent status (on/off, next and last run), counts (new leads, ready for the extension, need you, submitted today), *Run agent now*, the **Apply automatically** switch, *Apply now*, the application being worked on with live step-by-step progress, the queue (open / retry / mark submitted / answer in the dashboard) and recent results.
   - **Review**: approve or dismiss new leads (match score, summary, pros and gaps, "via *source*" link to the posting).
   - **This page**: on a job posting, *Send to agent* (optionally approve right away) and see the match score; on an application form, *Fill this form* with an approved application (stops before submitting). The saved-job autofill and the classic "extract this job to your tracker" flows are here too.
@@ -28,13 +28,13 @@ The service worker persists its state in `chrome.storage.session` before every s
 ```bash
 cd extension
 npm install
-npm run build      # side panel + service worker + content script into dist/
+npm run build      # popup + side panel + service worker + content script into dist/
 npm run typecheck
 ```
 
 Load `dist/` as an unpacked extension (`chrome://extensions` → Developer mode → Load unpacked). Requires Chrome 116+.
 
-The build produces three self-contained bundles (the content script cannot use ES module imports): `sidepanel.html` + `assets/`, `background/index.js` and `content/index.js`.
+The build produces three self-contained bundles (the content script cannot use ES module imports): `popup.html` and `sidepanel.html` (one app, shared `assets/`), `background/index.js` and `content/index.js`.
 
 ## Configuration
 
@@ -50,7 +50,7 @@ For a local server: `VITE_API_BASE_URL=http://localhost:18080/api/v1 npm run bui
 
 ## How authentication works
 
-1. In the side panel click **Open dashboard to connect**, then **Connect Chrome extension** in Settings → Extension.
+1. In the popup click **Open dashboard to connect**, then **Connect Chrome extension** in Settings → Extension.
 2. The dashboard opens `/extension-handshake?ext_token=…`. The content script on that page passes the single-use token to the service worker, which only accepts it from the configured dashboard origin (any `localhost` port is accepted only by builds whose dashboard is itself on `localhost`), exchanges it at `POST /auth/extension-token/exchange` (sending a device name such as "Chrome on macOS") and closes the tab.
 3. The **device token** is kept in `chrome.storage.local`; the 15-minute **access token** lives in `chrome.storage.session` (memory only, not readable by content scripts).
 4. Access tokens are refreshed about a minute before they expire, and once after a 401, through `POST /auth/extension/refresh`. The device token rotates on every refresh. Refreshes are single-flight within a context and serialised across the side panel and the service worker with the Web Locks API; on `DEVICE_TOKEN_ROTATED` the stored token is re-read and the refresh retried once; on `DEVICE_REVOKED` everything is cleared and the panel shows the sign-in screen.
@@ -67,7 +67,7 @@ Tokens are never logged, never sent to content scripts and never attached to any
 | `tabs` | Open applications in background tabs, read the active tab's URL for *This page*, close finished tabs |
 | `scripting` | Inject the content script into a tab that was open before the extension was installed or updated |
 | `activeTab` | Lets that injection work on the tab where you clicked the toolbar icon, without broad host access |
-| `sidePanel` | The extension UI |
+| `sidePanel` | The optional side panel view (the toolbar icon opens a popup, which works in browsers without side panels such as Arc) |
 | `notifications` | "X needs you" when an application stops for a CAPTCHA, a question or a review |
 | Host permission for the API only | The service worker and panel call the Aethlara API. No `<all_urls>` host permission |
 | Content script on all pages | Needed to fill forms on any job site and to relay the handshake. It never calls the API and never sees tokens; everything network-related goes through the service worker, which only serves the tab it is working in |
