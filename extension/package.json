@@ -1,6 +1,6 @@
 {
   "name": "aethlara-extension",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "scripts": {
     "build": "rm -rf dist && EXT_ENTRY=ui vite build && EXT_ENTRY=background vite build && EXT_ENTRY=content vite build",

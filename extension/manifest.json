@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Aethlara",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Your job-search autopilot: fills and submits the applications you approve, in your own browser.",
   "minimum_chrome_version": "116",
   "permissions": [
