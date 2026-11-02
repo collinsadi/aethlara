@@ -28,7 +28,7 @@ const zipContents = [
   "manifest.json",
   "background/index.js",
   "content/index.js",
-  "sidepanel.html + assets/",
+  "popup.html, sidepanel.html + assets/",
   "icons/",
 ];
 
@@ -36,7 +36,7 @@ const features = [
   {
     icon: Wand2,
     title: "Fill any application",
-    body: "On an application page, open the side panel and choose Fill this form. The extension fills every field from your tailored resume and saved answers, then stops before submitting so you can check.",
+    body: "On an application page, click the Aethlara icon and choose Fill this form. The extension fills every field from your tailored resume and saved answers, then stops before submitting so you can check.",
     badge: "Beta",
     highlight: true,
   },
@@ -163,7 +163,7 @@ export function Extension() {
                   Latest release
                 </span>
                 <span className="inline-flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-full bg-muted text-muted-foreground border border-border">
-                  v2.0.0
+                  v2.1.0
                 </span>
               </div>
 

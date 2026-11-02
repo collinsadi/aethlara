@@ -61,13 +61,13 @@ const steps = [
     n: "06",
     icon: CheckCircle2,
     title: "Pin the extension (recommended)",
-    body: "Click the puzzle-piece icon in your browser toolbar, find Aethlara in the list, and click the pin icon. The Aethlara icon now sits in your toolbar; click it to open the side panel.",
+    body: "Click the puzzle-piece icon in your browser toolbar, find Aethlara in the list, and click the pin icon. The Aethlara icon now sits in your toolbar; click it to open Aethlara.",
   },
   {
     n: "07",
     icon: SettingsIcon,
     title: "Connect your account",
-    body: "Open your Aethlara dashboard, go to Settings → Extension, and click Connect Chrome extension (the side panel's Open dashboard to connect takes you there). A tab opens, the extension picks up a one-time token, and you're connected. It stays connected across browser restarts until you sign out or disconnect it from Settings.",
+    body: "Open your Aethlara dashboard, go to Settings → Extension, and click Connect Chrome extension (Open dashboard to connect in the extension takes you there). A tab opens, the extension picks up a one-time token, and you're connected. It stays connected across browser restarts until you sign out or disconnect it from Settings.",
   },
 ];
 
@@ -89,8 +89,8 @@ const troubleshooting = [
     a: "Remove the old Aethlara extension at chrome://extensions first, then load the new folder, so you don't end up with two copies. Version 1 can't apply for the autopilot.",
   },
   {
-    q: "The side panel says I'm signed out",
-    a: "The extension stays connected with a device token. It signs out only if you sign out in the side panel or disconnect the browser in Settings → Extension. Connect again from there.",
+    q: "The extension says I'm signed out",
+    a: "The extension stays connected with a device token. It signs out only if you sign out in the extension or disconnect the browser in Settings → Extension. Connect again from there.",
   },
 ];
 
