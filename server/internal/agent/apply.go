@@ -976,6 +976,9 @@ func (s *Service) RetryApplication(ctx context.Context, userID, appID string) (*
 	app.LastError = nil
 	app.Needs = nil
 	app.ClaimExpiresAt = nil
+	// A manual retry starts a fresh budget for prepare retries and
+	// extension claims alike.
+	app.Attempts = 0
 	if err := s.repo.SaveApplication(ctx, app); err != nil {
 		return nil, ErrInternal
 	}
