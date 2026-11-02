@@ -912,6 +912,10 @@ profile is `enabled`) or manually (`POST /agent/runs`). Each run:
 3. Add a webhook for `email.received` pointing at
    `https://<api-host>/api/v1/webhooks/resend` and set its signing secret as
    `RESEND_WEBHOOK_SECRET`.
+4. If the agent domain lives in a different Resend account than the one
+   behind `RESEND_API_KEY`, create a **Full access** key in that account and
+   set it as `AGENT_RESEND_API_KEY` (a sending-only key cannot read received
+   mail). Platform mail (OTPs, digests, alerts) keeps using `RESEND_API_KEY`.
 
 Each user gets `<first>.<last>@AGENT_MAIL_DOMAIN` (editable). That address is
 what the agent puts on applications, so replies come back to the agent.

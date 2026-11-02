@@ -105,6 +105,11 @@ type Config struct {
 	// <name>@AgentMailDomain as the address the agent applies with. Empty
 	// disables the agent mailbox: applications then use the account email.
 	AgentMailDomain string
+	// AgentResendAPIKey is a Resend key for the account that owns
+	// AgentMailDomain, used to send applications from agent addresses and to
+	// read received mail (so it needs Full access). Empty = RESEND_API_KEY,
+	// which works when both domains live in one Resend account.
+	AgentResendAPIKey string
 	// ResendWebhookSecret is the "whsec_..." signing secret of the Resend
 	// webhook subscribed to email.received. Empty disables inbound mail.
 	ResendWebhookSecret       string
@@ -225,6 +230,7 @@ func Load() (*Config, error) {
 		ExtensionDeviceMaxPerUser: parseInt("EXTENSION_DEVICE_MAX_PER_USER", 5),
 
 		AgentMailDomain:           strings.ToLower(strings.TrimSpace(optional("AGENT_MAIL_DOMAIN", ""))),
+		AgentResendAPIKey:         optional("AGENT_RESEND_API_KEY", ""),
 		ResendWebhookSecret:       optional("RESEND_WEBHOOK_SECRET", ""),
 		AgentSchedulerEnabled:     parseBool("AGENT_SCHEDULER_ENABLED", true),
 		AgentSchedulerIntervalSec: parseInt("AGENT_SCHEDULER_INTERVAL_SECONDS", 60),

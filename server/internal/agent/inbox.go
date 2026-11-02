@@ -82,7 +82,7 @@ func (s *Service) HandleResendWebhook(ctx context.Context, h http.Header, body [
 		return nil
 	}
 
-	full, err := s.mail.GetReceivedEmail(ctx, ev.Data.EmailID)
+	full, err := s.agentMail.GetReceivedEmail(ctx, ev.Data.EmailID)
 	if err != nil {
 		return fmt.Errorf("fetch received email: %w", err) // Resend retries
 	}

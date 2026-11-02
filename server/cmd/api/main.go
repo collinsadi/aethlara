@@ -67,6 +67,15 @@ func main() {
 	if cfg.ResendBaseURL != "" {
 		emailClient.SetBaseURL(cfg.ResendBaseURL)
 	}
+	// The agent mailbox domain may live in a different Resend account than
+	// the platform sender; give it its own client when configured.
+	agentEmailClient := emailClient
+	if cfg.AgentResendAPIKey != "" {
+		agentEmailClient = email.NewClient(cfg.AgentResendAPIKey, cfg.EmailFromAddress, cfg.EmailFromName, cfg.AppName, cfg.EmailDevLogOnly)
+		if cfg.ResendBaseURL != "" {
+			agentEmailClient.SetBaseURL(cfg.ResendBaseURL)
+		}
+	}
 	if cfg.EmailDevLogOnly {
 		slog.Warn("EMAIL_DEV_LOG_ONLY is enabled: OTPs are logged to stdout and not sent via Resend")
 	}
@@ -119,7 +128,7 @@ func main() {
 	analyticsSvc := analytics.NewService(analyticsRepo)
 	settingsSvc := settings.NewService(settingsRepo, userRepo, apiKeySvc, aiClient, emailClient, cfg)
 	chatSvc := chat.NewService(chatRepo, aiClient, cfg)
-	agentSvc := agent.NewService(agentRepo, jobSvc, aiClient, emailClient, r2Client, cfg)
+	agentSvc := agent.NewService(agentRepo, jobSvc, aiClient, emailClient, agentEmailClient, r2Client, cfg)
 
 	// Wire per-user credential provider into the AI client after the settings
 	// service is ready.

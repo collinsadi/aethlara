@@ -124,6 +124,7 @@ The canonical reference is [`.env.example`](./.env.example). Key variables:
 | `EXTENSION_DEVICE_MAX_PER_USER` | Active long-lived extension devices per user | `5` |
 | `AGENT_MAIL_DOMAIN` | Agent mailbox domain (MX -> Resend Inbound); empty disables mailboxes | `agent.example.com` |
 | `RESEND_WEBHOOK_SECRET` | Signing secret of the Resend `email.received` webhook | `whsec_...` |
+| `AGENT_RESEND_API_KEY` | Full-access Resend key for the account that owns `AGENT_MAIL_DOMAIN`, if different from `RESEND_API_KEY`'s | `re_...` |
 | `AGENT_SCHEDULER_ENABLED` / `AGENT_SCHEDULER_INTERVAL_SECONDS` | Autopilot scheduler on/off and tick | `true` / `60` |
 | `AGENT_MAX_CONCURRENT_RUNS` / `AGENT_RUN_TIMEOUT_MINUTES` | Run concurrency and hard timeout | `2` / `30` |
 | `AGENT_MAX_LEADS_SCORED_PER_RUN` | Cost cap on AI-scored postings per run | `40` |

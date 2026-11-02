@@ -21,37 +21,39 @@ import (
 
 // Service runs the autopilot.
 type Service struct {
-	repo    *Repository
-	jobs    job.Service
-	ai      *ai.Client
-	mail    *email.Client
-	r2      *storage.R2Client
-	cfg     *config.Config
-	fetcher *sources.Fetcher
-	sources map[string]sources.Source
+	repo      *Repository
+	jobs      job.Service
+	ai        *ai.Client
+	mail      *email.Client // platform sender: digests and alerts to the user
+	agentMail *email.Client // agent domain: applications and received mail
+	r2        *storage.R2Client
+	cfg       *config.Config
+	fetcher   *sources.Fetcher
+	sources   map[string]sources.Source
 
 	runSem   chan struct{}
 	triageCh chan struct{}
 	wg       sync.WaitGroup
 }
 
-func NewService(repo *Repository, jobs job.Service, aiClient *ai.Client, mail *email.Client, r2 *storage.R2Client, cfg *config.Config) *Service {
+func NewService(repo *Repository, jobs job.Service, aiClient *ai.Client, mail, agentMail *email.Client, r2 *storage.R2Client, cfg *config.Config) *Service {
 	fetcher := sources.NewFetcher(time.Duration(cfg.AgentSourceCacheMinutes) * time.Minute)
 	maxRuns := cfg.AgentMaxConcurrentRuns
 	if maxRuns <= 0 {
 		maxRuns = 1
 	}
 	return &Service{
-		repo:     repo,
-		jobs:     jobs,
-		ai:       aiClient,
-		mail:     mail,
-		r2:       r2,
-		cfg:      cfg,
-		fetcher:  fetcher,
-		sources:  sources.New(fetcher),
-		runSem:   make(chan struct{}, maxRuns),
-		triageCh: make(chan struct{}, 1),
+		repo:      repo,
+		jobs:      jobs,
+		ai:        aiClient,
+		mail:      mail,
+		agentMail: agentMail,
+		r2:        r2,
+		cfg:       cfg,
+		fetcher:   fetcher,
+		sources:   sources.New(fetcher),
+		runSem:    make(chan struct{}, maxRuns),
+		triageCh:  make(chan struct{}, 1),
 	}
 }
 

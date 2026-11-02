@@ -419,7 +419,7 @@ func (s *Service) sendEmailApplication(ctx context.Context, p *Profile, ident id
 	}
 	text := body + "\n\n--\n" + strings.Join(signature, "\n")
 
-	providerID, err := s.mail.SendMessage(ctx, email.OutboundEmail{
+	providerID, err := s.agentMail.SendMessage(ctx, email.OutboundEmail{
 		From:        from,
 		To:          []string{*app.ApplyEmail},
 		ReplyTo:     []string{replyTo},
