@@ -86,6 +86,9 @@ func parseTailored(alignmentJSON string) *resumeDoc {
 }
 
 func (d *resumeDoc) summary() string {
+	if d == nil {
+		return ""
+	}
 	if d.Summary != "" {
 		return d.Summary
 	}
