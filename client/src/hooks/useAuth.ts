@@ -104,7 +104,7 @@ export function useAuth(): UseAuth {
 
       const from =
         (location.state as { from?: { pathname: string } })?.from?.pathname ??
-        "/dashboard";
+        "/agent";
       navigate(from, { replace: true });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -53,7 +53,7 @@ export default function App() {
                 <Route path="/help/resume-mismatch" element={<ResumeMismatch />} />
               </Route>
 
-              {/* Auth — redirect to dashboard if already logged in */}
+              {/* Auth — redirect to the autopilot if already logged in */}
               <Route
                 path="/login"
                 element={

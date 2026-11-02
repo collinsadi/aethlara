@@ -65,7 +65,7 @@ export function GuestGuard({ children }: AuthGuardProps) {
   }
 
   if (isAuthenticated) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to="/agent" replace />;
   }
 
   return <>{children}</>;
