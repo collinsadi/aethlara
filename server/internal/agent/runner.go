@@ -49,11 +49,6 @@ func (s *Service) runTimeout() time.Duration {
 }
 
 func (s *Service) schedulerLoop(ctx context.Context) {
-	// Runs left "running" by a crash or restart can never finish now.
-	if n, err := s.repo.FailStaleRuns(ctx, time.Now().Add(time.Minute)); err == nil && n > 0 {
-		slog.Warn("agent: closed interrupted runs", "count", n)
-	}
-
 	interval := time.Duration(s.cfg.AgentSchedulerIntervalSec) * time.Second
 	if interval < 10*time.Second {
 		interval = time.Minute
@@ -61,12 +56,24 @@ func (s *Service) schedulerLoop(ctx context.Context) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
+		s.sweepStaleRuns(ctx)
 		s.dispatchDue(ctx)
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		}
+	}
+}
+
+// sweepStaleRuns closes runs that outlived the run timeout: they were
+// interrupted by a crash or restart and would otherwise block the user's
+// next run. Using the timeout (not "everything at boot") keeps this safe
+// when several API instances share one database.
+func (s *Service) sweepStaleRuns(ctx context.Context) {
+	cutoff := time.Now().Add(-(s.runTimeout() + 2*time.Minute))
+	if n, err := s.repo.FailStaleRuns(ctx, cutoff); err == nil && n > 0 {
+		slog.Warn("agent: closed interrupted runs", "count", n)
 	}
 }
 
@@ -237,10 +244,18 @@ func runSummary(st RunStats) string {
 	return "Run finished: " + strings.Join(parts, ", ")
 }
 
-// sendDigest emails the user what happened, when anything did.
+// digestCooldown spaces out digests for users with short run intervals.
+const digestCooldown = 12 * time.Hour
+
+// sendDigest emails the user what happened, when anything did, at most once
+// per digestCooldown.
 func (s *Service) sendDigest(ctx context.Context, p *Profile, run *Run, st RunStats) {
 	needs, _ := s.repo.ApplicationsByStatus(ctx, p.UserID, AppNeedsInput, 10)
 	if st.NewLeads == 0 && st.EmailsSent == 0 && st.ReadyForBrowser == 0 && len(needs) == 0 {
+		return
+	}
+	if last, err := s.repo.LastEventOfKind(ctx, p.UserID, EventDigestSent); err == nil && last != nil &&
+		time.Since(*last) < digestCooldown {
 		return
 	}
 	user, err := s.repo.GetUserBasics(ctx, p.UserID)
@@ -280,7 +295,9 @@ func (s *Service) sendDigest(ctx context.Context, p *Profile, run *Run, st RunSt
 	subject := "Your job autopilot: " + strings.TrimPrefix(runSummary(st), "Run finished: ")
 	if err := s.mail.SendNotification(ctx, user.Email, subject, wrapEmail("Autopilot update", b.String())); err != nil {
 		slog.Warn("agent: digest email failed", "user_id", p.UserID, "error", err)
+		return
 	}
+	s.event(ctx, Event{UserID: p.UserID, RunID: &run.ID, Kind: EventDigestSent, Message: "Emailed you a summary of this run"})
 }
 
 // ── Lists for the dashboard ───────────────────────────────────────────────────

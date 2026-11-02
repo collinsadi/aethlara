@@ -195,6 +195,7 @@ const (
 	EventAppFailed     = "application_failed"
 	EventMailReceived  = "mail_received"
 	EventStatusChanged = "status_changed"
+	EventDigestSent    = "digest_sent"
 )
 
 // Lead is a discovered posting.

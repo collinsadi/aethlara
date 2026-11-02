@@ -226,6 +226,21 @@ func (r *Repository) AddEvent(ctx context.Context, e Event) error {
 	return err
 }
 
+// LastEventOfKind returns when the user's most recent event of kind happened.
+func (r *Repository) LastEventOfKind(ctx context.Context, userID, kind string) (*time.Time, error) {
+	var at time.Time
+	err := r.db.QueryRow(ctx, `
+		SELECT created_at FROM agent_events WHERE user_id = $1 AND kind = $2
+		ORDER BY id DESC LIMIT 1`, userID, kind).Scan(&at)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &at, nil
+}
+
 func (r *Repository) ListEvents(ctx context.Context, userID string, beforeID int64, limit int) ([]Event, error) {
 	rows, err := r.db.Query(ctx, `
 		SELECT id, user_id, run_id, kind, level, message, lead_id, application_id, data, created_at
