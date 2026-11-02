@@ -88,6 +88,7 @@ type leadDTO struct {
 	Salary             salaryDTO  `json:"salary"`
 	URL                string     `json:"url"`
 	ApplyURL           *string    `json:"apply_url"`
+	ApplyEmail         *string    `json:"apply_email"`
 	ApplyChannel       string     `json:"apply_channel"`
 	ATS                *string    `json:"ats"`
 	AutoApplySupported bool       `json:"auto_apply_supported"`
@@ -110,7 +111,7 @@ func toLeadDTO(l *Lead, withDescription bool) leadDTO {
 		ID: l.ID, Source: l.Source, SourceLabel: l.SourceLabel, Title: l.Title, Company: l.Company,
 		Location: l.Location, IsRemote: l.IsRemote, EmploymentType: l.EmploymentType,
 		Salary: salaryDTO{Min: l.SalaryMin, Max: l.SalaryMax, Currency: l.SalaryCurrency, Text: l.SalaryText},
-		URL:    l.URL, ApplyURL: l.ApplyURL, ApplyChannel: channel, ATS: l.ATS,
+		URL:    l.URL, ApplyURL: l.ApplyURL, ApplyEmail: l.ApplyEmail, ApplyChannel: channel, ATS: l.ATS,
 		AutoApplySupported: channel == ChannelEmail || (l.ATS != nil && sources.AutoApplySupported(*l.ATS)),
 		PostedAt:           l.PostedAt, Status: l.Status, DismissReason: l.DismissReason, DecidedAt: l.DecidedAt,
 		JobID: l.JobID, CreatedAt: l.CreatedAt,
