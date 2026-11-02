@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +44,19 @@ func userID(w http.ResponseWriter, r *http.Request) (string, bool) {
 		response.Error(w, http.StatusUnauthorized, response.CodeUnauthorized, "Authentication required.")
 	}
 	return id, ok
+}
+
+var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// pathID returns the {id} URL parameter, answering 404 itself when it is not
+// a UUID (Postgres would otherwise reject it as a server error).
+func pathID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	id := chi.URLParam(r, "id")
+	if !uuidRe.MatchString(id) {
+		response.Error(w, http.StatusNotFound, response.CodeNotFound, "Not found.")
+		return "", false
+	}
+	return id, true
 }
 
 func intParam(r *http.Request, key string, def, lo, hi int) int {
@@ -207,7 +221,11 @@ func (h *Handler) GetRun(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	run, err := h.svc.GetRun(r.Context(), uid, chi.URLParam(r, "id"))
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	run, err := h.svc.GetRun(r.Context(), uid, id)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -283,7 +301,11 @@ func (h *Handler) GetLead(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	lead, app, err := h.svc.GetLead(r.Context(), uid, chi.URLParam(r, "id"))
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	lead, app, err := h.svc.GetLead(r.Context(), uid, id)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -301,13 +323,17 @@ func (h *Handler) DecideLead(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
 	var body struct {
 		Decision string `json:"decision"`
 	}
 	if !decode(w, r, 4<<10, &body) {
 		return
 	}
-	lead, app, err := h.svc.DecideLead(r.Context(), uid, chi.URLParam(r, "id"), body.Decision)
+	lead, app, err := h.svc.DecideLead(r.Context(), uid, id, body.Decision)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -417,7 +443,11 @@ func (h *Handler) GetApplication(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	app, err := h.svc.GetApplication(r.Context(), uid, chi.URLParam(r, "id"))
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	app, err := h.svc.GetApplication(r.Context(), uid, id)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -447,7 +477,11 @@ func (h *Handler) GetPacket(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	pkt, err := h.svc.PacketFor(r.Context(), uid, chi.URLParam(r, "id"))
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	pkt, err := h.svc.PacketFor(r.Context(), uid, id)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -460,7 +494,11 @@ func (h *Handler) DownloadResume(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	data, name, contentType, err := h.svc.ResumeForApplication(r.Context(), uid, chi.URLParam(r, "id"))
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	data, name, contentType, err := h.svc.ResumeForApplication(r.Context(), uid, id)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -473,7 +511,11 @@ func (h *Handler) DownloadCoverLetter(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	data, err := h.svc.CoverLetterPDF(r.Context(), uid, chi.URLParam(r, "id"))
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	data, err := h.svc.CoverLetterPDF(r.Context(), uid, id)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -505,6 +547,10 @@ func (h *Handler) FillApplication(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
 	var body struct {
 		PageURL string      `json:"page_url"`
 		Fields  []FormField `json:"fields"`
@@ -512,7 +558,7 @@ func (h *Handler) FillApplication(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, 1<<20, &body) {
 		return
 	}
-	res, err := h.svc.FillFields(r.Context(), uid, chi.URLParam(r, "id"), body.PageURL, body.Fields)
+	res, err := h.svc.FillFields(r.Context(), uid, id, body.PageURL, body.Fields)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -522,6 +568,10 @@ func (h *Handler) FillApplication(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) ReportResult(w http.ResponseWriter, r *http.Request) {
 	uid, ok := userID(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
@@ -537,7 +587,7 @@ func (h *Handler) ReportResult(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, 256<<10, &body) {
 		return
 	}
-	app, err := h.svc.ReportResult(r.Context(), uid, chi.URLParam(r, "id"), ResultReport{
+	app, err := h.svc.ReportResult(r.Context(), uid, id, ResultReport{
 		Status: body.Status, Reason: body.Reason, Message: body.Message, Questions: body.Questions,
 		PageURL: body.PageURL, FinalURL: body.FinalURL, Filled: body.Filled,
 	})
@@ -553,13 +603,17 @@ func (h *Handler) SaveApplicationAnswers(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
 	var body struct {
 		Answers []QA `json:"answers"`
 	}
 	if !decode(w, r, 256<<10, &body) {
 		return
 	}
-	app, err := h.svc.SaveAnswers(r.Context(), uid, chi.URLParam(r, "id"), body.Answers)
+	app, err := h.svc.SaveAnswers(r.Context(), uid, id, body.Answers)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -572,7 +626,11 @@ func (h *Handler) RetryApplication(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	app, err := h.svc.RetryApplication(r.Context(), uid, chi.URLParam(r, "id"))
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	app, err := h.svc.RetryApplication(r.Context(), uid, id)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -585,7 +643,11 @@ func (h *Handler) CancelApplication(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	app, err := h.svc.CancelApplication(r.Context(), uid, chi.URLParam(r, "id"))
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	app, err := h.svc.CancelApplication(r.Context(), uid, id)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -625,7 +687,11 @@ func (h *Handler) GetMessage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	m, err := h.svc.GetMessage(r.Context(), uid, chi.URLParam(r, "id"))
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	m, err := h.svc.GetMessage(r.Context(), uid, id)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -638,6 +704,10 @@ func (h *Handler) MarkMessageRead(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
 	var body struct {
 		Read *bool `json:"read"`
 	}
@@ -645,7 +715,7 @@ func (h *Handler) MarkMessageRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	read := body.Read == nil || *body.Read
-	if err := h.svc.MarkRead(r.Context(), uid, chi.URLParam(r, "id"), read); err != nil {
+	if err := h.svc.MarkRead(r.Context(), uid, id, read); err != nil {
 		h.fail(w, r, err)
 		return
 	}
@@ -659,7 +729,13 @@ func (h *Handler) Verifications(w http.ResponseWriter, r *http.Request) {
 	}
 	since := time.Now().Add(-15 * time.Minute)
 	if v := r.URL.Query().Get("since"); v != "" {
-		if t, err := time.Parse(time.RFC3339, v); err == nil && t.After(time.Now().Add(-24*time.Hour)) {
+		// An unencoded "+01:00" offset arrives as " 01:00"; restore it.
+		t, err := time.Parse(time.RFC3339, strings.ReplaceAll(v, " ", "+"))
+		if err != nil {
+			response.Error(w, http.StatusBadRequest, response.CodeInvalidInput, "since must be an RFC 3339 timestamp (URL-encode '+').")
+			return
+		}
+		if t.After(time.Now().Add(-24 * time.Hour)) {
 			since = t
 		}
 	}
@@ -713,7 +789,11 @@ func (h *Handler) DeleteAnswer(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.svc.DeleteAnswer(r.Context(), uid, chi.URLParam(r, "id")); err != nil {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if err := h.svc.DeleteAnswer(r.Context(), uid, id); err != nil {
 		h.fail(w, r, err)
 		return
 	}

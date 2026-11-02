@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -14,6 +15,8 @@ import (
 )
 
 const maxBodyBytes = 1 << 20 // 1 MB
+
+var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 type Handler struct {
 	svc Service
@@ -346,7 +349,12 @@ func (h *Handler) RevokeExtensionDevice(w http.ResponseWriter, r *http.Request) 
 		response.Error(w, http.StatusUnauthorized, response.CodeUnauthorized, "Authentication required.")
 		return
 	}
-	if err := h.svc.RevokeExtensionDevice(r.Context(), userID, chi.URLParam(r, "id")); err != nil {
+	id := chi.URLParam(r, "id")
+	if !uuidRe.MatchString(id) {
+		response.Error(w, http.StatusNotFound, response.CodeNotFound, "Device not found.")
+		return
+	}
+	if err := h.svc.RevokeExtensionDevice(r.Context(), userID, id); err != nil {
 		if errors.Is(err, ErrTokenNotFound) {
 			response.Error(w, http.StatusNotFound, response.CodeNotFound, "Device not found.")
 			return

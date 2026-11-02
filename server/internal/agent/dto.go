@@ -316,7 +316,7 @@ func toPacketDTO(p *Packet) packetDTO {
 		CoverLetter:       p.CoverLetter,
 		Resume:            fileRefDTO{Filename: p.ResumeName, Path: "/agent/applications/" + p.Application.ID + "/resume"},
 		AutoSubmit:        p.AutoSubmit,
-		VerificationSince: time.Now().Add(-2 * time.Minute),
+		VerificationSince: time.Now().UTC().Add(-2 * time.Minute).Truncate(time.Second),
 	}
 	if p.CoverLetter != "" {
 		name := "Cover_Letter.pdf"
