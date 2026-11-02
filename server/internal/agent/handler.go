@@ -159,7 +159,7 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		MailboxLocalPart   *string             `json:"mailbox_local_part"`
 		SearchPrefs        *SearchPrefs        `json:"search_prefs"`
 		ApplicationProfile *ApplicationProfile `json:"application_profile"`
-		ApplySettings      *ApplySettings      `json:"apply_settings"`
+		ApplySettings      json.RawMessage     `json:"apply_settings"`
 		RunIntervalHours   *int                `json:"run_interval_hours"`
 	}
 	if !decode(w, r, 256<<10, &body) {
@@ -168,7 +168,7 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	p, err := h.svc.UpdateProfile(r.Context(), uid, ProfileUpdate{
 		Enabled: body.Enabled, ResumeID: body.ResumeID, MailboxLocalPart: body.MailboxLocalPart,
 		SearchPrefs: body.SearchPrefs, ApplicationProfile: body.ApplicationProfile,
-		ApplySettings: body.ApplySettings, RunIntervalHours: body.RunIntervalHours,
+		ApplySettingsPatch: body.ApplySettings, RunIntervalHours: body.RunIntervalHours,
 	})
 	if err != nil {
 		h.fail(w, r, err)

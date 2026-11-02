@@ -47,6 +47,9 @@ func scanProfile(row pgx.Row) (*Profile, error) {
 	}
 	_ = json.Unmarshal(search, &p.SearchPrefs)
 	_ = json.Unmarshal(appProf, &p.ApplicationProfile)
+	// Decode over the defaults so settings added later default correctly
+	// for profiles saved before they existed.
+	p.ApplySettings = defaultApplySettings()
 	_ = json.Unmarshal(applyS, &p.ApplySettings)
 	return &p, nil
 }

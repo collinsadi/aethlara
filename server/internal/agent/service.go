@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -211,7 +212,10 @@ type ProfileUpdate struct {
 	MailboxLocalPart   *string
 	SearchPrefs        *SearchPrefs
 	ApplicationProfile *ApplicationProfile
-	ApplySettings      *ApplySettings
+	// ApplySettingsPatch is a JSON object merged over the current apply
+	// settings: keys it omits keep their values, so clients that predate a
+	// setting cannot reset it.
+	ApplySettingsPatch json.RawMessage
 	RunIntervalHours   *int
 }
 
@@ -261,8 +265,11 @@ func (s *Service) UpdateProfile(ctx context.Context, userID string, u ProfileUpd
 	if u.ApplicationProfile != nil {
 		p.ApplicationProfile = sanitizeApplicationProfile(*u.ApplicationProfile)
 	}
-	if u.ApplySettings != nil {
-		as := *u.ApplySettings
+	if len(u.ApplySettingsPatch) > 0 && string(u.ApplySettingsPatch) != "null" {
+		as := p.ApplySettings
+		if err := json.Unmarshal(u.ApplySettingsPatch, &as); err != nil {
+			return nil, fmt.Errorf("%w: apply_settings must be an object", ErrInvalidInput)
+		}
 		if as.DailyLimit < 1 || as.DailyLimit > 100 {
 			return nil, fmt.Errorf("%w: daily_limit must be between 1 and 100", ErrInvalidInput)
 		}
