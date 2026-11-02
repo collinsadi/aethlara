@@ -1018,7 +1018,8 @@ source name linking to the lead's `url`.
 ### POST /agent/runs
 
 Starts a run now. **AI gate**; rate limit 12/hour. Returns `202` with the run.
-`409 RUN_IN_PROGRESS` if one is already running; `422 RESUME_REQUIRED`.
+`409 RUN_IN_PROGRESS` if one is already running; `422 RESUME_REQUIRED`;
+`400 INVALID_INPUT` when the profile has no target titles or keywords.
 
 ### GET /agent/runs?limit= · GET /agent/runs/:id
 
@@ -1047,7 +1048,7 @@ Activity feed, newest first (`before` = an event `id` for paging).
 Kinds: `run_started`, `run_finished`, `run_failed`, `leads_found`,
 `source_error`, `lead_approved`, `application_prepared`,
 `application_emailed`, `application_submitted`, `application_needs_input`,
-`application_failed`, `mail_received`, `status_changed`.
+`application_failed`, `mail_received`, `status_changed`, `digest_sent`.
 
 ### GET /agent/leads
 
@@ -1085,7 +1086,8 @@ for email and for Greenhouse/Lever/Ashby forms.
 
 `approve` queues an application for the next run; `dismiss` hides the lead
 (and cancels a queued application); `reset` brings a dismissed/expired lead
-back. Returns `{ "lead", "application" }`. `400 INVALID_INPUT` when the
+back, and also undoes an approval whose application has not started yet (the
+queued application is removed; `400` once the agent has started it). Returns `{ "lead", "application" }`. `400 INVALID_INPUT` when the
 application is already being submitted.
 
 ### POST /agent/leads/decisions
@@ -1211,12 +1213,17 @@ The extension works the queue of `ready` browser applications:
    ```
 
    `submitted` marks the lead `applied` and the tracker job `applied`.
-   `released` hands the claim back (`ready`). Only `in_progress`, `ready` or
-   `needs_input` applications accept results (`409 NOT_CLAIMABLE`).
+   `released` hands the claim back (`ready`) without counting an attempt.
+   Only `in_progress`, `ready` or `needs_input` applications accept results
+   (`409 NOT_CLAIMABLE`); a `failed` one also accepts `submitted`, so the
+   dashboard can record an application the user finished by hand. Results
+   are at-least-once: a repeated `needs_input` updates the questions without
+   a second event.
 
 5. **`GET /agent/inbox/verifications?since=<RFC3339>`** — verification codes
-   and links received since `since` (default: last 15 minutes), for forms that
-   email a security code:
+   and links received since `since` (default: last 15 minutes; `400` if it is
+   not RFC 3339 — URL-encode a `+` offset, or use the packet's UTC
+   `verification_since`), for forms that email a security code:
 
    ```json
    [ { "message_id": "uuid", "from": "no-reply@greenhouse.io", "subject": "Your security code",
