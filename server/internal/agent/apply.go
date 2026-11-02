@@ -802,7 +802,10 @@ func (s *Service) ReportResult(ctx context.Context, userID, appID string, r Resu
 	if app == nil {
 		return nil, ErrNotFound
 	}
-	if app.Status != AppInProgress && app.Status != AppReady && app.Status != AppNeedsInput {
+	switch {
+	case app.Status == AppInProgress, app.Status == AppReady, app.Status == AppNeedsInput:
+	case app.Status == AppFailed && r.Status == "submitted": // the user applied by hand
+	default:
 		return nil, ErrNotClaimable
 	}
 	lead, err := s.repo.GetLead(ctx, userID, app.LeadID)
