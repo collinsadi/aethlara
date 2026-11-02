@@ -241,6 +241,14 @@ func NewFetcher(ttl time.Duration) *Fetcher {
 	}
 }
 
+// NewFetcherWithClient returns a Fetcher using client (tests point it at a
+// fake transport).
+func NewFetcherWithClient(client *http.Client, ttl time.Duration) *Fetcher {
+	f := NewFetcher(ttl)
+	f.client = client
+	return f
+}
+
 // ErrNotFound is returned for 404 board/company lookups.
 var ErrNotFound = errors.New("not found")
 

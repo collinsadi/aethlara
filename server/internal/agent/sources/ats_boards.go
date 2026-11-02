@@ -138,24 +138,30 @@ func fetchGreenhouse(ctx context.Context, f *Fetcher, ref CompanyRef, q Query) (
 		if err != nil {
 			detail = j // keep the listing even without a description
 		}
-		company := firstNonEmpty(detail.CompanyName, j.CompanyName, ref.Name, ref.Slug)
-		posted := parseTime(firstNonEmpty(j.FirstPublished, j.UpdatedAt))
-		out = append(out, Posting{
-			Source:      Greenhouse,
-			SourceLabel: company + " (Greenhouse)",
-			ExternalID:  slug + ":" + id,
-			Title:       CleanText(j.Title),
-			Company:     company,
-			Location:    j.Location.Name,
-			IsRemote:    LooksRemote(j.Location.Name),
-			URL:         j.AbsoluteURL,
-			ApplyURL:    GreenhouseEmbedURL(slug, id),
-			ATS:         ATSGreenhouse,
-			Description: HTMLToText(detail.Content),
-			PostedAt:    posted,
-		})
+		out = append(out, ghPosting(slug, firstNonEmpty(ref.Name, ref.Slug), j, detail))
 	}
 	return out, nil
+}
+
+// ghPosting builds a Posting from a board listing entry and its detail
+// (detail may equal the listing when the description is unavailable).
+func ghPosting(slug, fallbackCompany string, j, detail ghJob) Posting {
+	id := strconv.FormatInt(j.ID, 10)
+	company := firstNonEmpty(detail.CompanyName, j.CompanyName, fallbackCompany)
+	return Posting{
+		Source:      Greenhouse,
+		SourceLabel: company + " (Greenhouse)",
+		ExternalID:  slug + ":" + id,
+		Title:       CleanText(j.Title),
+		Company:     company,
+		Location:    j.Location.Name,
+		IsRemote:    LooksRemote(j.Location.Name),
+		URL:         j.AbsoluteURL,
+		ApplyURL:    GreenhouseEmbedURL(slug, id),
+		ATS:         ATSGreenhouse,
+		Description: HTMLToText(detail.Content),
+		PostedAt:    parseTime(firstNonEmpty(j.FirstPublished, j.UpdatedAt)),
+	}
 }
 
 // ── Lever ─────────────────────────────────────────────────────────────────────
@@ -203,38 +209,43 @@ func fetchLever(ctx context.Context, f *Fetcher, ref CompanyRef, q Query) ([]Pos
 		if !q.TitleMatches(p.Text) {
 			continue
 		}
-		var sb strings.Builder
-		sb.WriteString(p.DescriptionPlain)
-		for _, l := range p.Lists {
-			sb.WriteString("\n\n" + l.Text + "\n" + HTMLToText(l.Content))
-		}
-		if p.AdditionalPlain != "" {
-			sb.WriteString("\n\n" + p.AdditionalPlain)
-		}
-		post := Posting{
-			Source:         Lever,
-			SourceLabel:    company + " (Lever)",
-			ExternalID:     slug + ":" + p.ID,
-			Title:          CleanText(p.Text),
-			Company:        company,
-			Location:       p.Categories.Location,
-			IsRemote:       strings.EqualFold(p.WorkplaceType, "remote") || LooksRemote(p.Categories.Location),
-			EmploymentType: NormalizeEmploymentType(p.Categories.Commitment),
-			URL:            p.HostedURL,
-			ApplyURL:       firstNonEmpty(p.ApplyURL, strings.TrimRight(p.HostedURL, "/")+"/apply"),
-			ATS:            ATSLever,
-			Description:    clip(strings.TrimSpace(sb.String()), MaxDescriptionChars),
-		}
-		if p.CreatedAt > 0 {
-			post.PostedAt = timePtr(time.UnixMilli(p.CreatedAt))
-		}
-		if p.SalaryRange != nil && strings.Contains(strings.ToLower(p.SalaryRange.Interval), "year") {
-			post.SalaryMin, post.SalaryMax = intPtr(p.SalaryRange.Min), intPtr(p.SalaryRange.Max)
-			post.SalaryCurrency = p.SalaryRange.Currency
-		}
-		out = append(out, post)
+		out = append(out, leverToPosting(slug, company, p))
 	}
 	return out, nil
+}
+
+// leverToPosting converts one Lever posting.
+func leverToPosting(slug, company string, p leverPosting) Posting {
+	var sb strings.Builder
+	sb.WriteString(p.DescriptionPlain)
+	for _, l := range p.Lists {
+		sb.WriteString("\n\n" + l.Text + "\n" + HTMLToText(l.Content))
+	}
+	if p.AdditionalPlain != "" {
+		sb.WriteString("\n\n" + p.AdditionalPlain)
+	}
+	post := Posting{
+		Source:         Lever,
+		SourceLabel:    company + " (Lever)",
+		ExternalID:     slug + ":" + p.ID,
+		Title:          CleanText(p.Text),
+		Company:        company,
+		Location:       p.Categories.Location,
+		IsRemote:       strings.EqualFold(p.WorkplaceType, "remote") || LooksRemote(p.Categories.Location),
+		EmploymentType: NormalizeEmploymentType(p.Categories.Commitment),
+		URL:            p.HostedURL,
+		ApplyURL:       firstNonEmpty(p.ApplyURL, strings.TrimRight(p.HostedURL, "/")+"/apply"),
+		ATS:            ATSLever,
+		Description:    clip(strings.TrimSpace(sb.String()), MaxDescriptionChars),
+	}
+	if p.CreatedAt > 0 {
+		post.PostedAt = timePtr(time.UnixMilli(p.CreatedAt))
+	}
+	if p.SalaryRange != nil && strings.Contains(strings.ToLower(p.SalaryRange.Interval), "year") {
+		post.SalaryMin, post.SalaryMax = intPtr(p.SalaryRange.Min), intPtr(p.SalaryRange.Max)
+		post.SalaryCurrency = p.SalaryRange.Currency
+	}
+	return post
 }
 
 // ── Ashby ─────────────────────────────────────────────────────────────────────
@@ -258,20 +269,7 @@ type ashbyJob struct {
 
 func fetchAshby(ctx context.Context, f *Fetcher, ref CompanyRef, q Query) ([]Posting, error) {
 	slug := url.PathEscape(ref.Slug)
-	jobs, err := cached(f, "ashby:"+strings.ToLower(slug), func() ([]ashbyJob, error) {
-		var body struct {
-			Jobs []ashbyJob `json:"jobs"`
-		}
-		err := f.getJSON(ctx, "https://api.ashbyhq.com/posting-api/job-board/"+slug+"?includeCompensation=true", &body)
-		if err != nil {
-			return nil, err
-		}
-		// Keep only what we use: Ashby boards can be many MB.
-		for i := range body.Jobs {
-			body.Jobs[i].DescriptionPlain = clip(body.Jobs[i].DescriptionPlain, MaxDescriptionChars)
-		}
-		return body.Jobs, nil
-	})
+	jobs, err := ashbyBoard(ctx, f, slug)
 	if err != nil {
 		return nil, err
 	}
@@ -282,27 +280,32 @@ func fetchAshby(ctx context.Context, f *Fetcher, ref CompanyRef, q Query) ([]Pos
 		if !j.IsListed || !q.TitleMatches(j.Title) {
 			continue
 		}
-		post := Posting{
-			Source:         Ashby,
-			SourceLabel:    company + " (Ashby)",
-			ExternalID:     strings.ToLower(slug) + ":" + j.ID,
-			Title:          CleanText(j.Title),
-			Company:        company,
-			Location:       j.Location,
-			IsRemote:       ashbyRemote(j),
-			EmploymentType: NormalizeEmploymentType(j.EmploymentType),
-			URL:            j.JobURL,
-			ApplyURL:       firstNonEmpty(j.ApplyURL, strings.TrimRight(j.JobURL, "/")+"/application"),
-			ATS:            ATSAshby,
-			Description:    j.DescriptionPlain,
-			PostedAt:       parseTime(j.PublishedAt),
-		}
-		if j.Compensation != nil {
-			post.SalaryText = j.Compensation.Summary
-		}
-		out = append(out, post)
+		out = append(out, ashbyToPosting(slug, company, j))
 	}
 	return out, nil
+}
+
+// ashbyToPosting converts one Ashby job.
+func ashbyToPosting(slug, company string, j ashbyJob) Posting {
+	post := Posting{
+		Source:         Ashby,
+		SourceLabel:    company + " (Ashby)",
+		ExternalID:     strings.ToLower(slug) + ":" + j.ID,
+		Title:          CleanText(j.Title),
+		Company:        company,
+		Location:       j.Location,
+		IsRemote:       ashbyRemote(j),
+		EmploymentType: NormalizeEmploymentType(j.EmploymentType),
+		URL:            j.JobURL,
+		ApplyURL:       firstNonEmpty(j.ApplyURL, strings.TrimRight(j.JobURL, "/")+"/application"),
+		ATS:            ATSAshby,
+		Description:    j.DescriptionPlain,
+		PostedAt:       parseTime(j.PublishedAt),
+	}
+	if j.Compensation != nil {
+		post.SalaryText = j.Compensation.Summary
+	}
+	return post
 }
 
 func firstNonEmpty(vals ...string) string {
