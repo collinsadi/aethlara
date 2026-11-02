@@ -238,6 +238,7 @@ type messageDTO struct {
 	ApplicationID *string         `json:"application_id"`
 	JobID         *string         `json:"job_id"`
 	TriageStatus  string          `json:"triage_status"`
+	SenderAuth    string          `json:"sender_auth"`
 	ReadAt        *time.Time      `json:"read_at"`
 	ReceivedAt    time.Time       `json:"received_at"`
 	TextBody      *string         `json:"text_body,omitempty"`
@@ -255,7 +256,7 @@ func toMessageDTO(m *Message, detail bool) messageDTO {
 		ID: m.ID, Direction: m.Direction, FromAddress: m.FromAddress, FromName: m.FromName, To: to,
 		Subject: m.Subject, Snippet: clipText(collapseSpace(m.TextBody), 180), Category: m.Category,
 		Summary: m.Summary, Important: m.Important, ApplicationID: m.ApplicationID, JobID: m.JobID,
-		TriageStatus: m.TriageStatus, ReadAt: m.ReadAt, ReceivedAt: m.ReceivedAt,
+		TriageStatus: m.TriageStatus, SenderAuth: m.SenderAuth, ReadAt: m.ReadAt, ReceivedAt: m.ReceivedAt,
 	}
 	if detail {
 		body := m.TextBody

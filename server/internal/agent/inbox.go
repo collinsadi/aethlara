@@ -120,6 +120,7 @@ func (s *Service) HandleResendWebhook(ctx context.Context, h http.Header, body [
 			TextBody:    clipText(text, storedBodyChars),
 			Links:       links,
 			Attachments: attachments,
+			SenderAuth:  full.SenderAuth(),
 			ReceivedAt:  received,
 		})
 		if err != nil {
@@ -255,6 +256,10 @@ func (s *Service) triageOne(ctx context.Context, m *Message) {
 		important = t.ActionRequired
 	}
 
+	if m.SenderAuth == "fail" {
+		important = false // unverified senders never page the user
+	}
+
 	upd := MessageTriageUpdate{
 		Status: "done", Category: &t.Category, Summary: strPtr(clipText(t.Summary, 400)),
 		Extracted: &t, Important: important,
@@ -268,6 +273,12 @@ func (s *Service) triageOne(ctx context.Context, m *Message) {
 		return
 	}
 
+	// Spoofed mail (failed SPF/DKIM/DMARC) is kept and labelled, but must
+	// not move the tracker or page the user.
+	if m.SenderAuth == "fail" {
+		log.Info("triage: sender authentication failed; no automatic actions")
+		return
+	}
 	if matched != nil {
 		s.applyMailOutcome(ctx, m.UserID, *matched, t.Category)
 	}

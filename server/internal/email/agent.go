@@ -123,16 +123,23 @@ func (c *Client) SendNotification(ctx context.Context, to, subject, html string)
 
 // ReceivedEmail is an inbound email fetched from Resend's receiving API.
 type ReceivedEmail struct {
-	ID          string            `json:"id"`
-	To          []string          `json:"to"`
-	From        string            `json:"from"`
-	CreatedAt   string            `json:"created_at"`
-	Subject     string            `json:"subject"`
-	HTML        string            `json:"html"`
-	Text        *string           `json:"text"`
-	Headers     map[string]string `json:"headers"`
-	MessageID   string            `json:"message_id"`
-	ReplyTo     []string          `json:"reply_to"`
+	ID        string            `json:"id"`
+	To        []string          `json:"to"`
+	From      string            `json:"from"`
+	CreatedAt string            `json:"created_at"`
+	Subject   string            `json:"subject"`
+	HTML      string            `json:"html"`
+	Text      *string           `json:"text"`
+	Headers   map[string]string `json:"headers"`
+	MessageID string            `json:"message_id"`
+	ReplyTo   []string          `json:"reply_to"`
+	// Authentication holds SPF/DKIM/DMARC verdicts ("pass", "fail", "gray",
+	// ...). Nil for mail received before Resend added the field.
+	Authentication *struct {
+		SPF   string `json:"spf"`
+		DKIM  string `json:"dkim"`
+		DMARC string `json:"dmarc"`
+	} `json:"authentication"`
 	Attachments []struct {
 		ID          string `json:"id"`
 		Filename    string `json:"filename"`
@@ -153,6 +160,23 @@ func (r *ReceivedEmail) FromName() string {
 		return addr.Name
 	}
 	return ""
+}
+
+// SenderAuth summarises sender authentication: "pass" when DMARC or DKIM
+// passed, "fail" when DMARC failed or both SPF and DKIM failed, otherwise
+// "unknown".
+func (r *ReceivedEmail) SenderAuth() string {
+	a := r.Authentication
+	if a == nil {
+		return "unknown"
+	}
+	switch {
+	case a.DMARC == "pass" || a.DKIM == "pass":
+		return "pass"
+	case a.DMARC == "fail" || (a.SPF == "fail" && a.DKIM == "fail"):
+		return "fail"
+	}
+	return "unknown"
 }
 
 // FromAddress returns the bare sender address.

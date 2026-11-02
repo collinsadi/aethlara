@@ -304,6 +304,7 @@ type Message struct {
 	JobID          *string
 	TriageStatus   string
 	TriageAttempts int
+	SenderAuth     string // pass | fail | unknown
 	ReadAt         *time.Time
 	ReceivedAt     time.Time
 	CreatedAt      time.Time

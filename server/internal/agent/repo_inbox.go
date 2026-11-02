@@ -12,7 +12,7 @@ import (
 
 const msgCols = `id, user_id, direction, provider_id, message_id, from_address, from_name, to_addresses,
 	subject, text_body, links, attachments, category, summary, extracted, important, application_id,
-	job_id, triage_status, triage_attempts, read_at, received_at, created_at`
+	job_id, triage_status, triage_attempts, sender_auth, read_at, received_at, created_at`
 
 func scanMessage(row pgx.Row) (*Message, error) {
 	var (
@@ -21,7 +21,7 @@ func scanMessage(row pgx.Row) (*Message, error) {
 	)
 	err := row.Scan(&m.ID, &m.UserID, &m.Direction, &m.ProviderID, &m.MessageID, &m.FromAddress, &m.FromName,
 		&to, &m.Subject, &m.TextBody, &links, &att, &m.Category, &m.Summary, &extracted, &m.Important,
-		&m.ApplicationID, &m.JobID, &m.TriageStatus, &m.TriageAttempts, &m.ReadAt, &m.ReceivedAt, &m.CreatedAt)
+		&m.ApplicationID, &m.JobID, &m.TriageStatus, &m.TriageAttempts, &m.SenderAuth, &m.ReadAt, &m.ReceivedAt, &m.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -57,15 +57,19 @@ func (r *Repository) InsertMessage(ctx context.Context, m Message) (*Message, er
 	if triage == "" {
 		triage = "pending"
 	}
+	senderAuth := m.SenderAuth
+	if senderAuth == "" {
+		senderAuth = "unknown"
+	}
 	row := r.db.QueryRow(ctx, `
 		INSERT INTO agent_messages (user_id, direction, provider_id, message_id, from_address, from_name,
 			to_addresses, subject, text_body, links, attachments, category, summary, important,
-			application_id, job_id, triage_status, received_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+			application_id, job_id, triage_status, received_at, sender_auth)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 		ON CONFLICT (user_id, provider_id) WHERE provider_id IS NOT NULL DO NOTHING
 		RETURNING `+msgCols,
 		m.UserID, m.Direction, m.ProviderID, m.MessageID, m.FromAddress, m.FromName, to, m.Subject,
-		m.TextBody, links, att, m.Category, m.Summary, m.Important, m.ApplicationID, m.JobID, triage, m.ReceivedAt)
+		m.TextBody, links, att, m.Category, m.Summary, m.Important, m.ApplicationID, m.JobID, triage, m.ReceivedAt, senderAuth)
 	return scanMessage(row)
 }
 
