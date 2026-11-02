@@ -12,15 +12,12 @@ import { StatusBreakdownChart } from '@/components/dashboard/StatusBreakdownChar
 import { MatchScoreChart } from '@/components/dashboard/MatchScoreChart'
 import { TopCompaniesChart } from '@/components/dashboard/TopCompaniesChart'
 import { useAnalytics } from '@/hooks/useAnalytics'
-import { useAuth } from '@/hooks/useAuth'
 
 const STAT_SKELETON = '—'
 
+/** /dashboard — "Insights": analytics across every tracked job. */
 export function Dashboard() {
-  const { user } = useAuth()
   const { data: analytics, isLoading } = useAnalytics()
-
-  const firstName = user?.full_name.split(' ')[0] ?? 'there'
 
   const avgMatchStr = isLoading
     ? STAT_SKELETON
@@ -48,13 +45,10 @@ export function Dashboard() {
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-2xl md:text-3xl font-semibold text-foreground tracking-tight font-heading">
-              Welcome back,{' '}
-              <span className="text-gradient">{firstName}</span>
+              Insights
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              {new Date().toLocaleDateString('en-US', {
-                weekday: 'long', month: 'long', day: 'numeric',
-              })}
+              How your search is going — every job you track, whether you added it or the autopilot applied.
             </p>
           </div>
           <ThemeSwitcher />
