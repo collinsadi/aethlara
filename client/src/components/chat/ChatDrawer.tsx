@@ -14,6 +14,7 @@ import {
   useSendChatMessage,
 } from '@/hooks/useChat'
 import { useAIGate } from '@/hooks/useAIGate'
+import { AI_SETTINGS_PATH } from '@/lib/apiError'
 import type { ApiError } from '@/lib/types'
 
 interface Props {
@@ -124,7 +125,7 @@ export function ChatDrawer({ jobId, onClose, onOpenJob }: Props) {
 
             {/* Body states */}
             {!hasKey && !aiKeyLoading ? (
-              <MissingApiKeyState onGoToSettings={() => navigate('/settings#api-key')} />
+              <MissingApiKeyState onGoToSettings={() => navigate(AI_SETTINGS_PATH)} />
             ) : sessionError ? (
               <SessionErrorState err={sessionError} onDismiss={onClose} />
             ) : !sessionId ? (
@@ -179,11 +180,11 @@ function MissingApiKeyState({ onGoToSettings }: { onGoToSettings: () => void }) 
         <KeyRound className="w-7 h-7 text-amber-500" />
       </div>
       <h3 className="text-base font-semibold text-foreground font-heading mb-1">
-        OpenRouter key required
+        AI key required
       </h3>
       <p className="text-xs text-muted-foreground max-w-xs mb-5">
-        Chat runs on your own OpenRouter key. Add yours in Settings to start chatting about this
-        role.
+        Chat runs on your own Anthropic or OpenRouter key. Add one in Settings to start chatting
+        about this role.
       </p>
       <button
         type="button"
@@ -208,7 +209,7 @@ function SessionErrorState({ err, onDismiss }: { err: ApiError; onDismiss: () =>
         {isJobNotReady
           ? 'Alignment not ready yet'
           : isApiKey
-            ? 'OpenRouter key required'
+            ? 'AI key required'
             : 'Couldn\'t start chat'}
       </h3>
       <p className="text-xs text-muted-foreground max-w-xs mb-5">

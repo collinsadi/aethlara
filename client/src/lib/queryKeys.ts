@@ -8,6 +8,7 @@
  *                   → jobs/pdf/{id}
  *   analytics → analytics/dashboard
  *   resumes → resumes/list, resumes/preview/{id}
+ *   settings → settings/ai, settings/profile
  *   agent → agent/overview, agent/profile, agent/sources, agent/events,
  *           agent/leads/{list|detail}, agent/applications/{list|detail},
  *           agent/inbox/{list|detail}, agent/answers
@@ -19,6 +20,7 @@
  *   - chat session created → invalidate chat.sessions()
  *   - chat message sent    → append to chat.messages(sessionId) infinite cache; do NOT refetch
  *   - chat session deleted → invalidate chat.sessions(); remove chat.messages(sessionId)
+ *   - AI key saved/removed/validated, provider switched → invalidate settings.ai() + agent.overview()
  *   - agent profile saved → write agent.profile() + agent.overview().profile, invalidate agent.overview()
  *   - lead decision   → optimistic removal from agent.leadList(*), mark agent.leads() stale,
  *                       invalidate agent.overview() + agent.applications()
@@ -80,7 +82,8 @@ export const queryKeys = {
   },
   settings: {
     all:     () => ['settings'] as const,
-    apiKey:  () => [...queryKeys.settings.all(), 'api-key'] as const,
+    /** Active provider, model overrides, stored keys and provider catalogue. */
+    ai:      () => [...queryKeys.settings.all(), 'ai'] as const,
     profile: () => [...queryKeys.settings.all(), 'profile'] as const,
   },
   user: {

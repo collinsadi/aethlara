@@ -8,6 +8,7 @@
  * Stops on: success, terminal error, unmount, or modal close.
  */
 import { useState, useEffect, useRef } from 'react'
+import { Link } from 'react-router-dom'
 import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -24,7 +25,7 @@ import { ApiKeyStatusBanner } from '@/components/settings/ApiKeyStatusBanner'
 import { MismatchModal, type MismatchData } from '@/components/jobs/MismatchModal'
 import { urlJobSchema, textJobSchema } from '@/lib/validators/job.schema'
 import type { ApiJob } from '@/lib/types'
-import { apiErrorMessage, extractMismatchData, isApiError } from '@/lib/apiError'
+import { AI_SETTINGS_PATH, apiErrorMessage, extractMismatchData, isApiError } from '@/lib/apiError'
 import { queryKeys } from '@/lib/queryKeys'
 import { cn } from '@/lib/utils'
 
@@ -322,6 +323,7 @@ export function CreateJobModal({ open, onClose, onSuccess }: Props) {
                   setInputMethod('text')
                   setStep('provide_job')
                 }}
+                onClose={handleClose}
               />
             )}
           </AnimatePresence>
@@ -677,6 +679,10 @@ const ERROR_MESSAGES: Record<string, { title: string; desc: string }> = {
     title: "Couldn't access that URL",
     desc: "We couldn't access that URL. Try pasting the job text instead.",
   },
+  API_KEY_REQUIRED: {
+    title: 'AI key required',
+    desc: 'Add a valid Anthropic or OpenRouter key for your active provider in Settings, then try again.',
+  },
 }
 
 function StepResult({
@@ -686,6 +692,7 @@ function StepResult({
   onAddAnother,
   onViewJob,
   onRetryWithText,
+  onClose,
 }: {
   job: ApiJob | null
   error: { code: string; message: string } | null
@@ -693,6 +700,7 @@ function StepResult({
   onAddAnother: () => void
   onViewJob: () => void
   onRetryWithText: () => void
+  onClose: () => void
 }) {
   if (error) {
     const known = ERROR_MESSAGES[error.code]
@@ -714,6 +722,15 @@ function StepResult({
           </p>
         </div>
         <div className="flex flex-col gap-2">
+          {error.code === 'API_KEY_REQUIRED' && (
+            <Link
+              to={AI_SETTINGS_PATH}
+              onClick={onClose}
+              className="btn-tf animate-btn-shine w-full text-sm font-semibold py-2.5"
+            >
+              Add API key
+            </Link>
+          )}
           {needsTextSwitch && (
             <button
               type="button"

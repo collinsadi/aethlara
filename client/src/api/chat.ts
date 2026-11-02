@@ -8,7 +8,7 @@
  * DELETE /chat/sessions/:id                               → { data: { id } }
  *
  * All endpoints require auth. POST endpoints additionally require a valid
- * per-user OpenRouter key on file — the backend returns:
+ * per-user AI key (Anthropic or OpenRouter) for the active provider — the backend returns:
  *   { error: { code: "API_KEY_REQUIRED", ... } }
  * which the UI layer converts into a gate prompt.
  */

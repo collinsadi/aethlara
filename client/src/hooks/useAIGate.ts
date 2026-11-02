@@ -1,12 +1,27 @@
-import { useApiKey } from '@/hooks/useApiKey'
+import { useAISettings } from '@/hooks/useAISettings'
 
+/**
+ * Whether AI features can run: the ACTIVE provider (Anthropic or OpenRouter)
+ * must have a valid key — the same rule as the server's AIGate middleware.
+ *
+ * If the settings request itself fails we don't block the UI: the server
+ * still enforces the gate and answers 403 API_KEY_REQUIRED.
+ */
 export function useAIGate() {
-  const { data: apiKey, isLoading } = useApiKey()
+  const { data, isLoading, isError } = useAISettings()
+  const provider = data?.provider ?? null
+  const activeKey = data?.keys.find((k) => k.provider === provider) ?? null
+  const providerLabel =
+    data?.providers.find((p) => p.id === provider)?.label ?? (provider === 'anthropic' ? 'Anthropic' : 'OpenRouter')
 
   return {
-    hasKey: !!apiKey && apiKey.validation_status === 'valid',
+    hasKey: isError || activeKey?.validation_status === 'valid',
     isLoading,
-    keyPrefix: apiKey?.key_prefix ?? null,
-    validationStatus: apiKey?.validation_status ?? null,
+    provider,
+    providerLabel,
+    /** A key exists for the active provider but is not usable (invalid / revoked / unvalidated). */
+    keyNeedsAttention: !!activeKey && activeKey.validation_status !== 'valid',
+    keyPrefix: activeKey?.key_prefix ?? null,
+    validationStatus: activeKey?.validation_status ?? null,
   }
 }
