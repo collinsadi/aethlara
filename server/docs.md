@@ -863,10 +863,10 @@ A run is triggered by the scheduler (every `run_interval_hours` while the
 profile is `enabled`) or manually (`POST /agent/runs`). Each run:
 
 1. **Applies** to approved leads (status `queued` applications), up to
-   `apply_settings.daily_limit` per rolling 24 hours: scrape the full posting
-   if needed, tailor the resume (same pipeline as `POST /jobs`, recorded with
-   `input_method: "agent"`), write a cover letter, then email it or mark it
-   `ready` for the extension.
+   `apply_settings.daily_limit` per rolling 24 hours: recover the full
+   posting if needed (see below), tailor the resume (same pipeline as
+   `POST /jobs`, recorded with `input_method: "agent"`), write a cover
+   letter, then email it or mark it `ready` for the extension.
 2. **Discovers** new postings from every enabled source, drops what cannot
    fit (titles, excluded keywords/companies, remote/location, employment type,
    age for aggregators), removes duplicates, and scores up to
@@ -877,6 +877,57 @@ profile is `enabled`) or manually (`POST /agent/runs`). Each run:
    (off by default) and applies to them in the same run.
 4. **Expires** leads left unreviewed for 21 days and emails a **digest** to the
    account email.
+
+### Preparing an application
+
+**Recovering the posting.** Web search leads and leads with a short
+description (under 800 characters) only carry a title and a link that may
+be a careers index or a JavaScript page. Before tailoring, the agent looks
+for the posting itself, stopping at the first hit:
+
+1. Greenhouse, Lever and Ashby links are read through their public APIs.
+2. Pages are fetched (HTTPS only, private and internal addresses refused,
+   including on redirects) and read for schema.org `JobPosting` JSON-LD,
+   for Greenhouse/Lever/Ashby boards they embed or link to, and for one hop
+   through a link whose text names the role.
+3. The company's board is guessed from its name and website
+   (`lightninglabs`, `lightning-labs`, `lightning` on Ashby, Greenhouse and
+   Lever).
+4. With an Anthropic key, web search looks for the posting's own URL, which
+   is then read as above.
+
+Matching a title is strict: every word of the approved role must appear
+(seniority and "remote" aside), so "Full-Stack Software Engineer -
+Compliance" never matches "- Growth". A recovered posting replaces the
+lead's description, link, `apply_url` and `ats`.
+
+**Transient failures** (AI timeouts, rate limits, provider errors, a
+malformed AI reply after one immediate retry) put the application back in
+the queue for the next run, up to 3 times. If tailoring alone fails, the
+agent applies with the original resume.
+
+**Cold email fallback.** When the posting still cannot be read (it closed,
+the role is not listed, the page has no job text) and
+`apply_settings.cold_email_fallback` is on, the agent emails the company
+instead (`channel: "cold_email"`), from the agent mailbox with the original
+resume attached:
+
+- The address must be published by the company: on its own pages
+  (`/careers`, `/jobs`, `/contact`, `/about`, the home page and pages seen
+  while looking for the posting, including Cloudflare-obfuscated addresses),
+  or on a page a web search cites, which is fetched to confirm the address
+  is really there. Addresses are never guessed.
+- The domain must belong to the company (it carries the company's name, e.g.
+  `careers@proton.ch` for Proton) and accept mail (MX records). Hiring
+  inboxes (`careers@`, `jobs@`, `talent@`...) are preferred to general ones
+  (`hello@`, `contact@`); support, press, legal, privacy, security and sales
+  inboxes are never used.
+- Roles at the same address in one run share one email, written with the
+  user's AI (template fallback). An address is emailed at most once per 14
+  days; later applications to it fail with an explanation.
+
+With the fallback off, or when no address is found, the application fails
+with the reason.
 
 ### Statuses
 
@@ -983,7 +1034,8 @@ latest processed resume) on first call.
   },
   "apply_settings": {
     "auto_submit": true, "daily_limit": 15, "auto_approve_score": null,
-    "cover_letters": true, "digest_emails": true, "important_alerts": true
+    "cover_letters": true, "digest_emails": true, "important_alerts": true,
+    "cold_email_fallback": true
   },
   "run_interval_hours": 24,
   "next_run_at": null,
@@ -994,8 +1046,9 @@ latest processed resume) on first call.
 
 `PUT` accepts any subset of: `enabled`, `resume_id`, `mailbox_local_part`,
 `search_prefs`, `application_profile`, `apply_settings`, `run_interval_hours`.
-Objects are replaced as a whole. Empty EEO answers mean "decline to
-self-identify".
+`search_prefs` and `application_profile` are replaced as a whole;
+`apply_settings` is merged into the current settings, so keys it omits keep
+their values. Empty EEO answers mean "decline to self-identify".
 
 | Rule | Error |
 |---|---|
@@ -1123,6 +1176,17 @@ company + title is returned instead of a duplicate.
 }
 ```
 
+`channel` is `browser` (the extension submits it), `email` (sent to the
+posting's application address) or `cold_email` (the posting could not be
+read; see "Cold email fallback"). For cold emails `cover_letter` holds the
+email body and `result` describes it:
+
+```json
+{ "kind": "cold_email", "to": "careers@acme.io", "contact_kind": "hiring",
+  "contact_source": "https://acme.io/careers", "subject": "Backend Engineer - Jane Doe",
+  "roles": ["Backend Engineer"], "reason": "the posting could not be found or read" }
+```
+
 `GET /agent/applications/:id` adds `cover_letter`.
 
 ### POST /agent/applications/:id/answers
@@ -1136,8 +1200,9 @@ every future form and the application returns to `ready`.
 
 ### POST /agent/applications/:id/retry · POST /agent/applications/:id/cancel
 
-Retry re-queues a `failed`, `needs_input` or `cancelled` application. Cancel
-stops any application that is not `submitted` (the lead becomes `dismissed`).
+Retry re-queues a `failed`, `needs_input` or `cancelled` application and
+resets `attempts`. Cancel stops any application that is not `submitted`
+(the lead becomes `dismissed`).
 
 ### Extension protocol
 
