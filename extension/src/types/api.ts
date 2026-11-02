@@ -123,7 +123,8 @@ export interface Application {
   id: string
   lead_id: string
   job_id: string | null
-  channel: 'browser' | 'email'
+  /** cold_email: the posting could not be read, so the server emailed the company directly. */
+  channel: 'browser' | 'email' | 'cold_email'
   status: ApplicationStatus
   apply_url: string | null
   apply_email: string | null
