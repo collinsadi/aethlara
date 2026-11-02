@@ -3,7 +3,6 @@ package sources
 import (
 	"context"
 	"fmt"
-	"html"
 	"net/url"
 	"strconv"
 	"strings"
@@ -119,8 +118,8 @@ func searchRemotive(ctx context.Context, f *Fetcher, term string) ([]Posting, er
 				Source:         Remotive,
 				SourceLabel:    "Remotive",
 				ExternalID:     strconv.FormatInt(j.ID, 10),
-				Title:          strings.TrimSpace(j.Title),
-				Company:        strings.TrimSpace(j.CompanyName),
+				Title:          CleanText(j.Title),
+				Company:        CleanText(j.CompanyName),
 				Location:       "Remote - " + loc,
 				IsRemote:       true,
 				EmploymentType: NormalizeEmploymentType(j.JobType),
@@ -178,8 +177,8 @@ func searchRemoteOK(ctx context.Context, f *Fetcher, _ string) ([]Posting, error
 				Source:      RemoteOK,
 				SourceLabel: "Remote OK",
 				ExternalID:  j.ID,
-				Title:       strings.TrimSpace(j.Position),
-				Company:     strings.TrimSpace(j.Company),
+				Title:       CleanText(j.Position),
+				Company:     CleanText(j.Company),
 				Location:    loc,
 				IsRemote:    true,
 				SalaryMin:   intPtr(j.SalaryMin),
@@ -246,8 +245,8 @@ func searchHimalayas(ctx context.Context, f *Fetcher, term string) ([]Posting, e
 					Source:         Himalayas,
 					SourceLabel:    "Himalayas",
 					ExternalID:     j.GUID,
-					Title:          strings.TrimSpace(j.Title),
-					Company:        strings.TrimSpace(j.CompanyName),
+					Title:          CleanText(j.Title),
+					Company:        CleanText(j.CompanyName),
 					Location:       loc,
 					IsRemote:       true,
 					EmploymentType: NormalizeEmploymentType(j.EmploymentType),
@@ -316,8 +315,8 @@ func searchJobicy(ctx context.Context, f *Fetcher, term string) ([]Posting, erro
 				Source:         Jobicy,
 				SourceLabel:    "Jobicy",
 				ExternalID:     strconv.FormatInt(j.ID, 10),
-				Title:          strings.TrimSpace(html.UnescapeString(j.JobTitle)),
-				Company:        strings.TrimSpace(j.CompanyName),
+				Title:          CleanText(j.JobTitle),
+				Company:        CleanText(j.CompanyName),
 				Location:       loc,
 				IsRemote:       true,
 				EmploymentType: NormalizeEmploymentType(strings.Join(j.JobType, " ")),
@@ -382,8 +381,8 @@ func searchArbeitnow(ctx context.Context, f *Fetcher, _ string) ([]Posting, erro
 				Source:         Arbeitnow,
 				SourceLabel:    "Arbeitnow",
 				ExternalID:     j.Slug,
-				Title:          strings.TrimSpace(j.Title),
-				Company:        strings.TrimSpace(j.CompanyName),
+				Title:          CleanText(j.Title),
+				Company:        CleanText(j.CompanyName),
 				Location:       j.Location,
 				IsRemote:       j.Remote || LooksRemote(j.Location),
 				EmploymentType: NormalizeEmploymentType(strings.Join(j.JobTypes, " ")),

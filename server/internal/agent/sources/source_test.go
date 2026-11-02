@@ -163,3 +163,22 @@ func TestLiveSources(t *testing.T) {
 		}
 	}
 }
+
+func TestRepairMojibake(t *testing.T) {
+	cases := map[string]string{
+		"Whatâ\u0080\u0099s Important": "What’s Important",         // Latin-1 decoded
+		"Weâ€™re hiring 1â€“2 seniors": "We’re hiring 1–2 seniors", // Windows-1252 decoded
+		"José from Zürich":             "José from Zürich",         // correct text untouched
+		"We’re hiring – now":           "We’re hiring – now",       // correct punctuation untouched
+		"Café ☕ and Ã©":                "Café ☕ and é",             // repaired run next to real emoji
+		"plain ascii":                  "plain ascii",
+	}
+	for in, want := range cases {
+		if got := RepairMojibake(in); got != want {
+			t.Errorf("RepairMojibake(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := CleanText("  hims &#038; hers  "); got != "hims & hers" {
+		t.Errorf("CleanText = %q", got)
+	}
+}

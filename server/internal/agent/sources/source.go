@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // MaxDescriptionChars caps stored/scored description text per posting.
@@ -329,6 +330,7 @@ func HTMLToText(s string) string {
 	s = blockTagRe.ReplaceAllString(s, "\n")
 	s = tagRe.ReplaceAllString(s, " ")
 	s = html.UnescapeString(s)
+	s = RepairMojibake(s)
 	s = spaceRe.ReplaceAllString(s, " ")
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
@@ -337,6 +339,72 @@ func HTMLToText(s string) string {
 	s = strings.Join(lines, "\n")
 	s = blankLinesRe.ReplaceAllString(s, "\n\n")
 	return clip(strings.TrimSpace(s), MaxDescriptionChars)
+}
+
+// CleanText decodes HTML entities ("hims &#038; hers") and repairs mojibake
+// in short fields such as titles and company names.
+func CleanText(s string) string {
+	return strings.TrimSpace(RepairMojibake(html.UnescapeString(s)))
+}
+
+// cp1252Rev maps the Windows-1252 characters of bytes 0x80-0x9F back to
+// those bytes.
+var cp1252Rev = map[rune]byte{
+	'€': 0x80, '‚': 0x82, 'ƒ': 0x83, '„': 0x84, '…': 0x85, '†': 0x86, '‡': 0x87, 'ˆ': 0x88,
+	'‰': 0x89, 'Š': 0x8A, '‹': 0x8B, 'Œ': 0x8C, 'Ž': 0x8E, '‘': 0x91, '’': 0x92, '“': 0x93,
+	'”': 0x94, '•': 0x95, '–': 0x96, '—': 0x97, '˜': 0x98, '™': 0x99, 'š': 0x9A, '›': 0x9B,
+	'œ': 0x9C, 'ž': 0x9E, 'Ÿ': 0x9F,
+}
+
+func mojibakeByte(r rune) (byte, bool) {
+	if r >= 0x80 && r <= 0xFF {
+		return byte(r), true
+	}
+	b, ok := cp1252Rev[r]
+	return b, ok
+}
+
+// RepairMojibake fixes UTF-8 text that some boards serve after decoding it
+// as Latin-1 or Windows-1252 ("WeÃ¢â‚¬â„¢re", "We\u00e2\u0080\u0099re").
+// Each run of such characters is turned back into bytes and replaced only
+// when those bytes are valid multi-byte UTF-8, so correct text ("José",
+// "We’re") is left alone.
+func RepairMojibake(s string) string {
+	var (
+		out     strings.Builder
+		run     []rune
+		changed bool
+	)
+	flush := func() {
+		if len(run) == 0 {
+			return
+		}
+		b := make([]byte, 0, len(run))
+		for _, r := range run {
+			c, _ := mojibakeByte(r)
+			b = append(b, c)
+		}
+		if utf8.Valid(b) && utf8.RuneCount(b) < len(run) {
+			out.Write(b)
+			changed = true
+		} else {
+			out.WriteString(string(run))
+		}
+		run = run[:0]
+	}
+	for _, r := range s {
+		if _, ok := mojibakeByte(r); ok {
+			run = append(run, r)
+			continue
+		}
+		flush()
+		out.WriteRune(r)
+	}
+	flush()
+	if !changed {
+		return s
+	}
+	return out.String()
 }
 
 func clip(s string, n int) string {
