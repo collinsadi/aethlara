@@ -72,8 +72,10 @@ func NewClient(apiKey, fromAddress, fromName, appName string, devLogOnly bool) *
 
 func (c *Client) SendEmailChangeOTP(ctx context.Context, to, otp string, expiryMinutes int) error {
 	if c.devLogOnly {
+		// "dev_code" (not "otp") so the logger's redaction does not hide the
+		// code this flag exists to print. Never enabled in production.
 		slog.Info("email: EMAIL_DEV_LOG_ONLY — email-change OTP not sent",
-			"to", to, "otp", otp, "expires_minutes", expiryMinutes)
+			"to", to, "dev_code", otp, "expires_minutes", expiryMinutes)
 		return nil
 	}
 
@@ -148,8 +150,10 @@ func (c *Client) send(ctx context.Context, to, subject, html string) error {
 
 func (c *Client) SendOTP(ctx context.Context, to, otp string, expiryMinutes int, otpType string) error {
 	if c.devLogOnly {
+		// "dev_code" (not "otp") so the logger's redaction does not hide the
+		// code this flag exists to print. Never enabled in production.
 		slog.Info("email: EMAIL_DEV_LOG_ONLY is set — OTP not sent via Resend",
-			"to", to, "otp", otp, "type", otpType, "expires_minutes", expiryMinutes)
+			"to", to, "dev_code", otp, "type", otpType, "expires_minutes", expiryMinutes)
 		return nil
 	}
 
