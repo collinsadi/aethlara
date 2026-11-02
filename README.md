@@ -4,10 +4,10 @@
 
 # Aethlara
 
-**An open-source, AI-powered job application platform that tailors your resume to every role you apply for.**
+**An open-source AI job-hunting agent: it finds roles that fit you, applies to the ones you approve, and tracks every reply.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go&logoColor=white)](https://golang.org)
+[![Go](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](https://golang.org)
 [![Node](https://img.shields.io/badge/Node-18%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org)
 [![Open Source](https://img.shields.io/badge/Open%20Source-%E2%9D%A4-red)](https://github.com/collinsadi/aethlara)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
@@ -35,6 +35,7 @@
   - [Build from source](#build-from-source)
 - [API Documentation](#api-documentation)
 - [How It Works](#how-it-works)
+- [Autopilot Setup](#autopilot-setup)
 - [Open Source & Self-Hosting](#open-source--self-hosting)
 - [Contributing](#contributing)
 - [License](#license)
@@ -44,28 +45,35 @@
 
 ## Overview
 
-Aethlara is an open-source, AI-powered job application platform. You upload your resume once, paste a job URL or description, and Aethlara produces a tailored resume aligned to that specific role — plus a match score, a clean PDF, and a Kanban board to track every application through the pipeline.
+Aethlara is an open-source job-hunting agent. Upload your resume and tell it what you are looking for; from then on it works on a schedule:
 
-**The problem.** Applying to jobs is a slog. Copy-pasting from job boards, rewriting the same resume a dozen different ways, guessing which roles are worth the effort. Most "AI resume" tools are closed, expensive, and quietly train on your data.
+1. **It searches.** Company boards on Greenhouse, Lever and Ashby from your watchlist, the big remote boards (Remotive, Remote OK, Himalayas, Jobicy, Arbeitnow), and — with an Anthropic key — Claude web search.
+2. **It scores.** Every posting is matched against your resume and preferences, with a one-line reason, strengths and gaps. Deal-breakers (location, authorization, seniority, salary) are filtered out before you ever see them.
+3. **You approve.** Triage the queue in seconds (keyboard shortcuts, bulk actions). Approval is the only manual step.
+4. **It applies on the next run.** Each approved job gets a tailored resume and cover letter. Email applications are sent from your agent's own mailbox; form applications (Greenhouse, Lever, Ashby and more) are filled and submitted by the Chrome extension in your browser.
+5. **It follows up.** Replies land in the agent's mailbox, get triaged by AI, and move your tracker automatically — confirmations, rejections, interview invites, assessments and offers. Verification codes are picked up and entered for you. Anything that needs you (an unusual question, a CAPTCHA) is asked once and remembered.
 
-**The approach.** Aethlara is fully open source under MIT. The hosted version follows a bring-your-own-key model — you plug in your own OpenRouter API key, encrypted with AES-256-GCM, and pay only for the AI calls you make. No subscriptions, no lock-in, no hidden training. If you'd rather run the whole thing yourself, self-hosting is a `docker-compose up` away.
+**The approach.** Aethlara is fully open source under MIT and runs on your own AI key — Anthropic (recommended; enables web search) or OpenRouter — encrypted with AES-256-GCM. No subscriptions, no lock-in, no training on your data. Self-hosting is a `docker compose up` away.
 
 ---
 
 ## Features
 
-- **Passwordless OTP authentication** — email-based sign-in with bcrypt-hashed one-time codes and rotating refresh tokens
-- **Resume upload + AI extraction** — drop in a PDF, DOCX, or Markdown file and get a structured resume JSON back
-- **Job intake via URL scrape or text paste** — provide a link (with SSRF protection) or paste the description directly
-- **AI job detail extraction** — parses raw postings into structured JSON (title, company, requirements, responsibilities)
-- **AI resume tailoring + match scoring** — rewrites your resume against each job and returns a 1–100% alignment score
-- **Tailored PDF resume generation** — each job gets its own clean, minimal PDF stored on Cloudflare R2
-- **Kanban application status tracker** — drag jobs across stages with `dnd-kit`, with optimistic updates
-- **Analytics dashboard** — match rate, monthly application trends, status breakdown, top companies
-- **Encrypted API key management** — user API keys stored with AES-256-GCM; decrypted only inside the AI service
-- **Cloudflare R2 file storage** — resumes and generated PDFs, served via short-lived presigned URLs
-- **Light and dark mode** — every component themed via CSS variables
-- **Chrome extension** — one-click job extraction and AI autofill on any application page (see [Chrome Extension](#chrome-extension))
+- **Autopilot** — scheduled runs (every 1–168 hours) or "Run now": apply to what you approved, discover new jobs, email you a digest
+- **Job discovery** — Greenhouse / Lever / Ashby company watchlist (starter list included), Remotive, Remote OK, Himalayas, Jobicy, Arbeitnow and Claude web search; responses cached and shared across users
+- **AI match scoring** — batched, prompt-cached scoring on your fast model with fit, reasons, gaps and deal-breakers; low scores auto-dismissed, optional auto-approve threshold
+- **Review queue** — keyboard-first triage (J/K/A/X/O), bulk approve, filters, undo, "add a job by URL"
+- **Hands-free applying** — tailored resume + cover letter per job; email applications sent from the agent's address with the PDF attached; form applications queued for the Chrome extension with a lease-based claim protocol
+- **Agent mailbox** — every user gets `name@your-agent-domain` (Resend Inbound); applications use it so replies come back to the agent; Svix-signed webhook, idempotent ingestion, SPF/DKIM/DMARC-aware
+- **Inbox triage** — AI classifies mail (confirmation, rejection, interview, assessment, offer, verification, recruiter) and advances the tracker; important mail alerts; verification codes exposed to the extension
+- **Learned answers** — questions the agent cannot answer are asked once and reused on every later form
+- **Anthropic + OpenRouter** — bring either key; smart/fast model slots per user; official Anthropic Go SDK with structured outputs, prompt caching, adaptive thinking and server-side refusal fallbacks
+- **Resume upload + AI extraction** — PDF, DOCX or Markdown to structured JSON
+- **Tailored PDF resumes + match scoring** — per job, stored on Cloudflare R2
+- **Kanban tracker + analytics** — updated automatically by the agent
+- **Per-job AI chat** — strategy, interview prep, cover letter drafting
+- **Chrome extension** — long-lived revocable device auth, autopilot runner, side panel, ATS-aware form filling with resume upload
+- **Passwordless OTP auth**, encrypted API keys, light and dark mode
 
 ---
 
@@ -77,8 +85,8 @@ Aethlara is an open-source, AI-powered job application platform. You upload your
 | Vite | Chi Router |
 | Tailwind CSS v4 | PostgreSQL (via pgx) |
 | React Query v5 | Cloudflare R2 (S3-compatible) |
-| React Hook Form + Zod | OpenRouter (per-user API key) |
-| dnd-kit | Resend (transactional email) |
+| React Hook Form + Zod | Anthropic Go SDK + OpenRouter (per-user keys) |
+| dnd-kit | Resend (transactional + inbound email) |
 | Recharts | AES-256-GCM encryption |
 | React Router v7 | golang-jwt (access + refresh tokens) |
 | Axios + js-cookie | Docker + Docker Compose |
@@ -102,7 +110,7 @@ aethlara/
 │
 ├── server/                   # Go REST API backend
 │   ├── cmd/api/              # Application entrypoint
-│   ├── internal/             # Domain modules (auth, user, resume, job, settings, analytics, ai, prompts, apikey, email, storage, middleware, database, config)
+│   ├── internal/             # Domain modules (agent + agent/sources, auth, user, resume, job, chat, settings, analytics, ai, prompts, apikey, email, storage, middleware, database, config)
 │   ├── pkg/                  # Shared utilities (response, validator, tokenutil)
 │   ├── Dockerfile
 │   ├── docker-compose.yml
@@ -111,11 +119,11 @@ aethlara/
 │
 ├── extension/                # Chrome extension (Manifest v3, React + Vite)
 │   ├── src/
-│   │   ├── background/       # Service worker (auth handshake, message routing)
-│   │   ├── content/          # Content scripts (page scanner, form filler, extractor)
-│   │   ├── popup/            # React popup UI (pages, hooks, components)
-│   │   ├── api/              # API clients (auth, jobs, resumes, autofill)
-│   │   └── lib/              # Shared utilities (storage, queryClient, sanitise)
+│   │   ├── background/       # Service worker (device auth, API client, autopilot runner, tabs)
+│   │   ├── content/          # Content script (form detection and filling, ATS adapters, submit flow)
+│   │   ├── sidepanel/        # React side panel (Autopilot, Review, This page, Settings)
+│   │   ├── types/            # API, runner and message contracts
+│   │   └── lib/              # Shared utilities (config, storage, messaging, queryClient)
 │   ├── manifest.json         # Manifest v3 declaration
 │   ├── package.json
 │   └── vite.config.ts
@@ -132,12 +140,12 @@ aethlara/
 
 ### Prerequisites
 
-- **Go** 1.22 or newer
+- **Go** 1.25 or newer
 - **Node.js** 18 or newer
 - **PostgreSQL** 15 or newer (or Docker)
 - A **Cloudflare R2** bucket with an access key pair
-- A **Resend** account and API key for transactional email
-- An **OpenRouter** account (self-hosters can set a default key; hosted users supply their own in-app)
+- A **Resend** account and API key for transactional email (and, for the agent mailbox, Resend Inbound on a domain you own)
+- An **Anthropic** or **OpenRouter** API key — each user adds their own in Settings; the server holds no AI key
 
 ### Clone the repository
 
@@ -188,8 +196,14 @@ The full variable reference lives in [`server/.env.example`](./server/.env.examp
 | `DATABASE_URL` | PostgreSQL connection string |
 | `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | JWT signing secrets (min 32 chars each) |
 | `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET_NAME` / `R2_PUBLIC_ENDPOINT` | Cloudflare R2 credentials |
-| `RESEND_API_KEY` | Resend API key for OTP and notification email |
-| `API_KEY_ENCRYPTION_SECRET` | AES-256-GCM key for user-supplied OpenRouter keys |
+| `RESEND_API_KEY` | Resend API key for OTP, notification and agent email |
+| `AGENT_RESEND_API_KEY` | Optional key for the Resend account that owns `AGENT_MAIL_DOMAIN`, if that differs from `RESEND_API_KEY`'s. Must be **full access**: the agent sends applications and reads received mail |
+| `API_KEY_ENCRYPTION_SECRET` | AES-256-GCM key for user-supplied Anthropic/OpenRouter keys |
+| `ANTHROPIC_MODEL` / `ANTHROPIC_FAST_MODEL` | Default smart/fast models for Anthropic users (`claude-opus-5-5` / `claude-haiku-5-5`) |
+| `OPENROUTER_MODEL` / `OPENROUTER_FAST_MODEL` | Default smart/fast models for OpenRouter users |
+| `AGENT_MAIL_DOMAIN` | Subdomain whose MX points at Resend Inbound, e.g. `agent.example.com` (empty disables agent mailboxes) |
+| `RESEND_WEBHOOK_SECRET` | Signing secret of the Resend `email.received` webhook |
+| `AGENT_SCHEDULER_*`, `AGENT_MAX_*` | Scheduler tick, concurrency, run timeout and per-run scoring cap |
 
 > **Important.** `API_KEY_ENCRYPTION_SECRET` must be exactly **32 bytes** (64 hex chars). Generate one with:
 >
@@ -203,29 +217,31 @@ The full variable reference lives in [`server/.env.example`](./server/.env.examp
 
 ## Chrome Extension
 
-The `extension/` folder contains the Aethlara Chrome extension — a Manifest v3 add-on that brings job extraction and AI-powered autofill into any tab you're browsing. It's the fastest way to capture roles from job boards (LinkedIn, Indeed, Wellfound, company careers pages) and to fill multi-page application forms (Workday, Greenhouse, Lever, Ashby) without copy-pasting.
+The `extension/` folder contains the Aethlara Chrome extension (Manifest V3, v2). It is the autopilot's hands: the server finds and scores jobs, you approve the ones worth applying to, and the extension fills and submits those applications **in your own browser**, then reports the outcome back to Aethlara.
 
 ### What it does
 
-- **AI autofill** — Open any application form, click Autofill, and the extension fills every detected field using your tailored resume context. Powered by the same OpenRouter pipeline as the dashboard.
-- **One-click job extraction** — Browsing a job posting? Pull out the structured details and see your match score before saving the role to your tracker.
-- **Save-as-you-browse** — Capture interesting roles to your tracker without leaving the page, then come back later to tailor and apply.
-- **Secure handshake auth** — Connects to your Aethlara account via a single-use, 60-second token issued by the dashboard. No passwords or refresh tokens ever live in the extension. Sessions last 15 minutes.
-- **Scoped permissions** — `activeTab` only, host permissions limited to the Aethlara API domain (never `<all_urls>`).
+- **Applies for the autopilot** — While *Apply automatically* is on, it checks the queue on a schedule (or right away with *Apply now*), opens each approved application in a background tab, fills it with the answers the server prepared, attaches your tailored resume and cover letter, and submits. Greenhouse, Lever and Ashby have dedicated adapters; a generic adapter handles other forms.
+- **Stops when it should** — CAPTCHAs, sign-in walls, questions only you can answer and unexpected redirects pause the application with a notification. Answer in the dashboard and it carries on; emailed security codes are read from the agent mailbox automatically.
+- **Side panel** — *Autopilot* (status, queue, live progress), *Review* (approve or dismiss new leads) and *This page* (send the posting to the agent, fill the open form, or extract the job into your tracker).
+- **Stays connected** — A one-time, 60-second handshake from the dashboard gives the extension a rotating device token, so it stays signed in across browser restarts. Disconnect it any time from **Settings → Extension**.
+- **Scoped access** — Host permission for the Aethlara API only. The content script runs on every page so it can fill forms on any job site, but it never calls the API and never sees tokens.
 
 ### Download and install
 
-The packaged extension lives at [`client/public/downloadable/aethlara-extension-v1.zip`](./client/public/downloadable/aethlara-extension-v1.zip) and is also available in-app:
+The packaged extension lives at [`client/public/downloadable/aethlara-extension-v2.zip`](./client/public/downloadable/aethlara-extension-v2.zip) and is also available in-app:
 
 1. Open the Aethlara dashboard or landing page and click **Download Extension** (or visit `/extension`).
-2. Unzip the file — you should see a folder containing `manifest.json`, `background/`, `content/`, popup assets, and `icons/`.
+2. Unzip the file — you should see a folder containing `manifest.json`, `sidepanel.html`, `assets/`, `background/`, `content/` and `icons/`.
 3. Open your browser's extensions page (`chrome://extensions`, `brave://extensions`, `edge://extensions`, or `arc://extensions`).
 4. Enable **Developer mode** (top-right toggle).
 5. Click **Load unpacked** and select the unzipped folder (the one that directly contains `manifest.json`).
-6. Pin the Aethlara icon to your toolbar via the puzzle-piece menu.
-7. Open **Settings → Extension** in your Aethlara dashboard and click **Connect Chrome Extension** to complete the handshake.
+6. Pin the Aethlara icon to your toolbar via the puzzle-piece menu; clicking it opens the side panel.
+7. Click **Open dashboard to connect** in the side panel, then **Connect Chrome extension** in **Settings → Extension**.
 
-A step-by-step guide with screenshots-style instructions is also available in-app at `/extension/install`.
+Upgrading from v1? Remove the old extension first so you don't end up with two copies. Chrome 116 or newer is required.
+
+A step-by-step guide is also available in-app at `/extension/install`.
 
 ### Build from source
 
@@ -235,7 +251,7 @@ If you'd rather build the extension yourself (recommended for self-hosted deploy
 cd extension
 cp .env.example .env
 # Edit .env:
-#   VITE_API_BASE_URL=https://your-api-domain.com/api/v1
+#   VITE_API_BASE_URL=https://your-api-domain.com/api/v1   (its origin becomes the host permission)
 #   VITE_DASHBOARD_URL=https://your-dashboard-domain.com
 npm install
 npm run build
@@ -243,7 +259,7 @@ npm run build
 
 The build output lives in `extension/dist/`. Load that folder as an unpacked extension via the steps above.
 
-> **Note.** The bundled `aethlara-extension-v1.zip` is built against the hosted Aethlara API. Self-hosters should rebuild from source so the extension talks to their own server.
+> **Note.** The bundled `aethlara-extension-v2.zip` is built against the hosted Aethlara API. Self-hosters should rebuild from source so the extension talks to their own server.
 
 For the full extension reference (permissions, limitations, internal architecture), see [`extension/README.md`](./extension/README.md).
 
@@ -261,7 +277,9 @@ Module groups:
 - [User](./server/docs.md#7-get-userme) — profile (`/user/me`)
 - Resumes — upload, list, preview URL, soft delete
 - Jobs — create (URL or text), list, detail, status transitions, preview, delete
-- Settings — API key CRUD, profile update, email change flow
+- Settings — AI provider + per-provider API keys, profile update, email change flow
+- [Autopilot](./server/docs.md#autopilot-agent) — profile, runs, events, leads, applications, extension protocol, agent inbox, saved answers, Resend webhook
+- [Extension devices](./server/docs.md#extension-devices) — handshake exchange, rotating device tokens
 - Analytics — dashboard aggregations
 
 All responses follow a consistent envelope:
@@ -278,21 +296,38 @@ All responses follow a consistent envelope:
 
 ## How It Works
 
-The job creation pipeline turns a raw URL or pasted description into a tailored PDF in a single flow:
-
 ```mermaid
 flowchart TD
-    A[User Input<br/>URL or Text] --> B[HTML Scraper<br/>SSRF-protected]
-    B --> C[Job Extraction AI<br/>OpenRouter]
-    C --> D[Structured Job JSON]
-    D --> E[Resume Alignment AI<br/>OpenRouter]
-    E --> F[Tailored Resume JSON<br/>+ Match Score]
-    F --> G[PDF Generator<br/>clean, minimal template]
-    G --> H[Cloudflare R2<br/>presigned URLs]
-    H --> I[Job Record Saved<br/>PostgreSQL]
+    subgraph Run["Autopilot run (scheduled or Run now)"]
+        A[Approved leads] --> B[Tailor resume + cover letter<br/>smart model]
+        B --> C{Apply channel}
+        C -->|Email| D[Send from agent mailbox<br/>Resend + PDF]
+        C -->|Form| E[Queue for extension]
+        F[Sources: ATS watchlist,<br/>remote boards, web search] --> G[Prefilter + dedupe]
+        G --> H[Batched scoring<br/>fast model, prompt-cached]
+        H --> I[Review queue]
+    end
+    I -->|You approve| A
+    E --> J[Chrome extension claims,<br/>fills, uploads, submits]
+    J --> K[Tracker: applied]
+    D --> K
+    L[Replies to agent mailbox] --> M[Resend webhook<br/>Svix-verified]
+    M --> N[AI triage]
+    N --> O[Tracker: interview / rejected / offer<br/>+ alerts + verification codes]
 ```
 
-Every AI call is routed through a single service (`server/internal/ai/openrouter.go`) which decrypts the user's API key only at the moment of the call. Prompts are versioned in `server/internal/prompts/`.
+Every AI call goes through `server/internal/ai`, which resolves the user's own encrypted key per request and dispatches to Anthropic (official Go SDK) or OpenRouter. Prompts are versioned in `server/internal/prompts/`. The full API is documented in [`server/docs.md`](./server/docs.md).
+
+---
+
+## Autopilot Setup
+
+1. **AI key** — in Settings → AI provider, add an Anthropic key (recommended; enables Claude web search) or an OpenRouter key. Pick smart/fast models or keep the defaults.
+2. **Resume** — upload one; the agent seeds your search preferences and application profile from it.
+3. **Preferences** — in Autopilot → Settings, set target titles, keywords, locations/remote, seniority, salary floor, exclusions, sources and your company watchlist, plus the answers forms always ask (work authorization, sponsorship, notice period, links, voluntary self-identification).
+4. **Agent mailbox** (self-hosters) — set `AGENT_MAIL_DOMAIN` to a subdomain, add it to Resend for receiving (MX) and sending (SPF/DKIM), and point a Resend `email.received` webhook at `https://<api>/api/v1/webhooks/resend` with its secret in `RESEND_WEBHOOK_SECRET`. Use a subdomain: Resend receives all mail for the domain.
+5. **Extension** — install it, connect once from Settings → Extension, and turn on its autopilot. It works the queue while Chrome is open.
+6. **Turn on Autopilot** — the first run starts right away; after that it runs on your schedule. Review the queue whenever it emails you.
 
 ---
 
@@ -300,7 +335,7 @@ Every AI call is routed through a single service (`server/internal/ai/openrouter
 
 Aethlara is fully open source under the [MIT License](./LICENSE).
 
-- **Hosted version** — bring your own OpenRouter API key; no subscription, no usage caps beyond what OpenRouter charges you.
+- **Hosted version** — bring your own Anthropic or OpenRouter API key; no subscription, no usage caps beyond what your provider charges you.
 - **Self-hosted** — `docker compose up --build` in `server/`, `npm run dev` in `client/`, point the client at your server. That's it.
 - **Contributions** — pull requests, issues, and discussions are all welcome. See [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 
