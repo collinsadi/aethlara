@@ -553,6 +553,7 @@ Endpoints protected by the AI gate:
 - `POST /jobs`, `POST /jobs/extract-from-extension`, `POST /jobs/:id/autofill`
 - `POST /chat/sessions`
 - `POST /chat/sessions/:session_id/messages`
+- `POST /agent/runs`, `POST /agent/leads`, `POST /agent/applications/:id/fill`
 
 ---
 
@@ -837,3 +838,483 @@ the DB with `deleted_at` set so analytics can still reason about activity.
 ```json
 { "data": { "id": "<uuid>" }, "message": "Chat session deleted." }
 ```
+
+---
+
+## Autopilot (Agent)
+
+The autopilot searches job boards for the user, scores every posting against
+their resume, and asks the user to approve the ones worth applying to. On the
+next run it applies to everything approved:
+
+- **Email applications** (postings that say "send your CV to ...") are sent by
+  the server from the user's agent mailbox, with the tailored resume attached.
+- **Form applications** (Greenhouse, Lever, Ashby and other ATS pages) are
+  queued for the Chrome extension, which fills and submits them in the user's
+  own browser.
+
+Replies arrive in the agent mailbox (Resend Inbound), are triaged by AI, and
+move the tracker automatically (confirmation -> applied, rejection ->
+rejected, interview/assessment -> interview, offer -> offer).
+
+### Run loop
+
+A run is triggered by the scheduler (every `run_interval_hours` while the
+profile is `enabled`) or manually (`POST /agent/runs`). Each run:
+
+1. **Applies** to approved leads (status `queued` applications), up to
+   `apply_settings.daily_limit` per rolling 24 hours: scrape the full posting
+   if needed, tailor the resume (same pipeline as `POST /jobs`, recorded with
+   `input_method: "agent"`), write a cover letter, then email it or mark it
+   `ready` for the extension.
+2. **Discovers** new postings from every enabled source, drops what cannot
+   fit (titles, excluded keywords/companies, remote/location, employment type,
+   age for aggregators), removes duplicates, and scores up to
+   `AGENT_MAX_LEADS_SCORED_PER_RUN` postings with the user's **fast** model.
+   Leads below `search_prefs.min_score` (or with a deal-breaker) are stored as
+   `dismissed` so they are never re-scored.
+3. **Auto-approves** leads at or above `apply_settings.auto_approve_score`
+   (off by default) and applies to them in the same run.
+4. **Expires** leads left unreviewed for 21 days and emails a **digest** to the
+   account email.
+
+### Statuses
+
+| Lead `status` | Meaning |
+|---|---|
+| `new` | Awaiting the user's decision |
+| `approved` | Approved; an application is queued |
+| `applying` | Application being prepared or waiting on the extension |
+| `applied` | Submitted |
+| `failed` | Preparation or submission failed (retryable) |
+| `dismissed` | Dismissed by the user, or auto-dismissed (`dismiss_reason`: `user`, `low_score`, `dealbreaker`, `cancelled`) |
+| `expired` | Not reviewed within 21 days |
+
+| Application `status` | Meaning |
+|---|---|
+| `queued` | Approved; will be prepared on the next run |
+| `preparing` | Tailoring / cover letter in progress |
+| `ready` | Waiting for the extension to claim it (`channel: browser`) |
+| `in_progress` | Claimed by the extension (lease: `AGENT_CLAIM_LEASE_MINUTES`) |
+| `needs_input` | Waiting on the user (`needs.reason`: `missing_answers`, `captcha`, `login_required`, `verification`, `unsupported_form`, `review`) |
+| `submitted` | Done |
+| `failed` | See `last_error`; `POST .../retry` re-queues it |
+| `cancelled` | Cancelled by the user |
+
+### Mailbox setup (Resend Inbound)
+
+1. Choose a subdomain for agent mail, e.g. `agent.example.com`, and set
+   `AGENT_MAIL_DOMAIN=agent.example.com`. Use a subdomain: once its MX points
+   at Resend, Resend receives **all** mail for that domain.
+2. In Resend, add the domain for receiving and create the MX record it shows.
+   Verify the same domain for sending (SPF/DKIM) so email applications can be
+   sent from it.
+3. Add a webhook for `email.received` pointing at
+   `https://<api-host>/api/v1/webhooks/resend` and set its signing secret as
+   `RESEND_WEBHOOK_SECRET`.
+
+Each user gets `<first>.<last>@AGENT_MAIL_DOMAIN` (editable). That address is
+what the agent puts on applications, so replies come back to the agent.
+Without `AGENT_MAIL_DOMAIN` the agent uses the account email and inbound
+features are disabled.
+
+All endpoints below require `Authorization: Bearer <access_token>` and use the
+standard envelope. List endpoints return `{ "items": [...], "pagination":
+{ "page", "page_size", "total_items", "total_pages", "has_next", "has_prev" } }`.
+
+### GET /agent/overview
+
+Home-screen summary. Creates the profile with defaults (derived from the
+latest processed resume) on first call.
+
+```json
+{
+  "data": {
+    "profile": { "...": "see GET /agent/profile" },
+    "setup": {
+      "ai_provider": "anthropic", "has_ai_key": true, "web_search_available": true,
+      "has_resume": true, "has_preferences": true, "mailbox_enabled": true,
+      "inbound_enabled": true, "extension_connected": false
+    },
+    "counts": {
+      "leads": { "new": 29, "dismissed": 11, "applied": 1 },
+      "applications": { "ready": 2, "submitted": 1 },
+      "unread_important": 1,
+      "submitted_today": 1
+    },
+    "running_run": null,
+    "last_run": { "...": "run object" },
+    "recent_events": [ { "...": "event object" } ]
+  }
+}
+```
+
+### GET /agent/profile · PUT /agent/profile
+
+```json
+{
+  "enabled": false,
+  "resume_id": "uuid",
+  "mailbox_address": "collins.adi@agent.example.com",
+  "mailbox_domain": "agent.example.com",
+  "search_prefs": {
+    "titles": ["Backend Engineer"], "keywords": ["Go", "PostgreSQL"],
+    "exclude_keywords": ["clearance"], "locations": ["Lagos, Nigeria"], "remote_only": true,
+    "seniority": ["senior"], "employment_types": ["full_time"],
+    "min_salary": 80000, "salary_currency": "USD", "exclude_companies": [],
+    "max_age_days": 30, "min_score": 60,
+    "sources": { "greenhouse": true, "lever": true, "ashby": true, "remotive": true, "remoteok": true,
+                 "himalayas": true, "jobicy": true, "arbeitnow": false, "web_search": true },
+    "watchlist": [ { "ats": "greenhouse", "slug": "stripe", "name": "Stripe" } ]
+  },
+  "application_profile": {
+    "full_name": "Collins Adi", "phone": "", "location": "Lagos, Nigeria", "country": "Nigeria",
+    "linkedin": "", "github": "", "portfolio": "", "website": "",
+    "work_authorization": "Nigerian citizen; needs sponsorship for the US",
+    "requires_sponsorship": true, "willing_to_relocate": null,
+    "notice_period": "2 weeks", "earliest_start_date": "", "salary_expectation": "USD 90,000",
+    "years_of_experience": 5, "pronouns": "", "how_did_you_hear": "Company website",
+    "additional_info": "",
+    "eeo": { "gender": "", "race": "", "veteran": "", "disability": "", "sexual_orientation": "" }
+  },
+  "apply_settings": {
+    "auto_submit": true, "daily_limit": 15, "auto_approve_score": null,
+    "cover_letters": true, "digest_emails": true, "important_alerts": true
+  },
+  "run_interval_hours": 24,
+  "next_run_at": null,
+  "last_run_at": null,
+  "updated_at": "2026-11-02T10:00:00Z"
+}
+```
+
+`PUT` accepts any subset of: `enabled`, `resume_id`, `mailbox_local_part`,
+`search_prefs`, `application_profile`, `apply_settings`, `run_interval_hours`.
+Objects are replaced as a whole. Empty EEO answers mean "decline to
+self-identify".
+
+| Rule | Error |
+|---|---|
+| Enabling needs a processed resume | `422 RESUME_REQUIRED` |
+| Enabling needs at least one title or keyword | `400 INVALID_INPUT` |
+| `mailbox_local_part`: 1-40 of `a-z 0-9 . _ -` | `400 INVALID_INPUT`, `409 MAILBOX_TAKEN`, `422 MAILBOX_DISABLED` |
+| `daily_limit` 1-100, `auto_approve_score` 50-100 or null, `run_interval_hours` 1-168, `min_score` 0-100, `max_age_days` 0-365 | `400 INVALID_INPUT` |
+| `watchlist[].ats` must be `greenhouse`, `lever` or `ashby`; `slug` `[A-Za-z0-9._-]` | `400 INVALID_INPUT` |
+
+Enabling sets `next_run_at` to now, so the first scheduled run starts within
+`AGENT_SCHEDULER_INTERVAL_SECONDS`.
+
+### GET /agent/sources
+
+Source catalogue (`id`, `label`, `kind`: `ats` | `board` | `ai`,
+`description`, `attribution`) and `starter_watchlist`. Sources with
+`attribution: true` (Remotive, Remote OK, Jobicy) require clients to show the
+source name linking to the lead's `url`.
+
+### POST /agent/runs
+
+Starts a run now. **AI gate**; rate limit 12/hour. Returns `202` with the run.
+`409 RUN_IN_PROGRESS` if one is already running; `422 RESUME_REQUIRED`.
+
+### GET /agent/runs?limit= · GET /agent/runs/:id
+
+```json
+{
+  "id": "uuid", "trigger": "manual", "status": "completed",
+  "stats": {
+    "sources_queried": 8, "source_errors": { "remotive": "HTTP 503" },
+    "postings_fetched": 598, "new_leads": 29, "scored": 40, "strong_matches": 9,
+    "auto_approved": 0, "prepared": 3, "emails_sent": 1, "ready_for_browser": 2,
+    "failed": 0, "messages_triaged": 0
+  },
+  "error": null, "started_at": "...", "finished_at": "..."
+}
+```
+
+### GET /agent/events?before=&limit=
+
+Activity feed, newest first (`before` = an event `id` for paging).
+
+```json
+{ "id": 42, "kind": "leads_found", "level": "success", "message": "Found 29 new jobs to review (9 strong matches)",
+  "run_id": "uuid", "lead_id": null, "application_id": null, "data": null, "created_at": "..." }
+```
+
+Kinds: `run_started`, `run_finished`, `run_failed`, `leads_found`,
+`source_error`, `lead_approved`, `application_prepared`,
+`application_emailed`, `application_submitted`, `application_needs_input`,
+`application_failed`, `mail_received`, `status_changed`.
+
+### GET /agent/leads
+
+Query: `status` (comma-separated), `min_score`, `source`, `remote`
+(`true`/`false`), `search`, `sort` (`score` default | `recent`), `page`,
+`page_size` (max 100).
+
+```json
+{
+  "id": "uuid", "source": "ashby", "source_label": "OpenAI (Ashby)",
+  "title": "Software Engineer", "company": "OpenAI", "location": "San Francisco", "is_remote": false,
+  "employment_type": "full_time",
+  "salary": { "min": null, "max": null, "currency": null, "text": "$266K - $445K" },
+  "url": "https://jobs.ashbyhq.com/openai/...", "apply_url": "https://jobs.ashbyhq.com/openai/.../application",
+  "apply_channel": "browser", "ats": "ashby", "auto_apply_supported": true,
+  "posted_at": "...",
+  "match": { "score": 92, "fit": "strong", "summary": "You ...", "pros": ["..."], "gaps": ["..."], "dealbreaker": null },
+  "status": "new", "dismiss_reason": null, "decided_at": null, "job_id": null, "created_at": "..."
+}
+```
+
+`match` is `null` until the lead is scored. `apply_channel` is `email` when
+the posting asks for applications by email. `auto_apply_supported` is true
+for email and for Greenhouse/Lever/Ashby forms.
+
+### GET /agent/leads/:id
+
+`{ "lead": <lead + "description">, "application": <application or null> }`.
+
+### POST /agent/leads/:id/decision
+
+```json
+{ "decision": "approve" }
+```
+
+`approve` queues an application for the next run; `dismiss` hides the lead
+(and cancels a queued application); `reset` brings a dismissed/expired lead
+back. Returns `{ "lead", "application" }`. `400 INVALID_INPUT` when the
+application is already being submitted.
+
+### POST /agent/leads/decisions
+
+`{ "ids": ["uuid", ...], "decision": "approve" }` (1-100 ids). Returns
+`{ "results": [ { "id", "ok", "error"? } ] }`.
+
+### POST /agent/leads
+
+Adds a posting the user found. **AI gate**; rate limit 40/hour.
+
+```json
+{ "url": "https://...", "page_text": "optional visible page text", "approve": false, "source": "extension" }
+```
+
+The page is scraped (SSRF-protected) when `page_text` is shorter than 200
+characters, parsed with the job extraction prompt, scored and stored.
+Returns `201 { "lead", "application" }`; an existing lead for the same
+company + title is returned instead of a duplicate.
+
+### GET /agent/applications?status=&page=&page_size=
+
+```json
+{
+  "id": "uuid", "lead_id": "uuid", "job_id": "uuid", "channel": "browser", "status": "ready",
+  "apply_url": "https://job-boards.greenhouse.io/embed/job_app?for=reddit&token=1", "apply_email": null,
+  "ats": "greenhouse", "has_cover_letter": true, "use_original_resume": false, "attempts": 0,
+  "last_error": null,
+  "needs": { "reason": "missing_answers", "message": "...", "questions": [ { "field_id": "q1", "label": "...", "type": "text", "options": [] } ], "page_url": "..." },
+  "result": { "filled": 7, "final_url": "...", "message": "..." },
+  "claim_expires_at": null, "submitted_at": null, "created_at": "...", "updated_at": "...",
+  "lead": { "title": "...", "company": "...", "score": 88, "url": "..." }
+}
+```
+
+`GET /agent/applications/:id` adds `cover_letter`.
+
+### POST /agent/applications/:id/answers
+
+Answers the questions of a `needs_input` application; they are saved for
+every future form and the application returns to `ready`.
+
+```json
+{ "answers": [ { "question": "Do you hold an active TS/SCI clearance?", "answer": "No" } ] }
+```
+
+### POST /agent/applications/:id/retry · POST /agent/applications/:id/cancel
+
+Retry re-queues a `failed`, `needs_input` or `cancelled` application. Cancel
+stops any application that is not `submitted` (the lead becomes `dismissed`).
+
+### Extension protocol
+
+The extension works the queue of `ready` browser applications:
+
+1. **`POST /agent/applications/claim`** — leases the next `ready` application
+   (`in_progress`, expires after `AGENT_CLAIM_LEASE_MINUTES`; an expired lease
+   becomes claimable again). Returns `data: null` when nothing is waiting,
+   otherwise a packet:
+
+   ```json
+   {
+     "application": { "...": "application object" },
+     "lead": { "...": "lead object" },
+     "identity": { "full_name": "Collins Adi", "first_name": "Collins", "last_name": "Adi",
+                   "email": "collins.adi@agent.example.com", "phone": "...", "location": "...",
+                   "linkedin": "...", "github": "...", "portfolio": "", "website": "" },
+     "profile": { "...": "application_profile" },
+     "answers": [ { "id": "uuid", "question": "...", "answer": "...", "source": "user", "updated_at": "..." } ],
+     "cover_letter": "Dear Hiring Team, ...",
+     "resume": { "filename": "Collins_Adi_Resume.pdf", "path": "/agent/applications/<id>/resume" },
+     "cover_letter_file": { "filename": "Collins_Cover_Letter.pdf", "path": "/agent/applications/<id>/cover-letter.pdf" },
+     "auto_submit": true,
+     "verification_since": "..."
+   }
+   ```
+
+   `identity.email` is the agent mailbox when configured. `GET
+   /agent/applications/:id/packet` returns the same packet without claiming.
+
+2. **`GET /agent/applications/:id/resume`** and
+   **`GET /agent/applications/:id/cover-letter.pdf`** — the files to upload
+   (tailored PDF, or the original upload when tailoring was skipped).
+   `Content-Disposition` and `X-File-Name` carry the file name.
+
+3. **`POST /agent/applications/:id/fill`** — **AI gate**; rate limit 150/hour.
+   Send the fields detected on the current page:
+
+   ```json
+   {
+     "page_url": "https://...",
+     "fields": [
+       { "field_id": "first_name", "label": "First Name", "type": "text", "required": true },
+       { "field_id": "auth", "label": "Authorized to work in the US?", "type": "select", "required": true, "options": ["Yes", "No"] },
+       { "field_id": "resume", "label": "Resume/CV", "type": "file", "required": true }
+     ]
+   }
+   ```
+
+   Field fields: `field_id` (unique, max 120), `label`, `type`, `name`,
+   `placeholder`, `required`, `options` (for select/radio/checkbox/combobox),
+   `section`, `help`. 1-150 fields per call. Response:
+
+   ```json
+   {
+     "fills": [ { "field_id": "first_name", "value": "Collins", "confidence": "high" },
+                { "field_id": "resume", "value": "__RESUME__", "confidence": "high" } ],
+     "missing": [ { "field_id": "q7", "label": "Do you hold an active clearance?", "type": "text" } ]
+   }
+   ```
+
+   Option answers are always one of the field's `options` (multi-select
+   values are joined with `" | "`). File fields get `__RESUME__` or
+   `__COVER_LETTER__`. `missing` lists required fields that need the user.
+
+4. **`POST /agent/applications/:id/result`** — report the outcome:
+
+   ```json
+   { "status": "submitted", "filled": 9, "final_url": "https://.../thanks", "message": "Thank you for applying" }
+   { "status": "needs_input", "reason": "missing_answers", "message": "...", "questions": [ ... ], "page_url": "..." }
+   { "status": "failed", "message": "Submit button not found" }
+   { "status": "released" }
+   ```
+
+   `submitted` marks the lead `applied` and the tracker job `applied`.
+   `released` hands the claim back (`ready`). Only `in_progress`, `ready` or
+   `needs_input` applications accept results (`409 NOT_CLAIMABLE`).
+
+5. **`GET /agent/inbox/verifications?since=<RFC3339>`** — verification codes
+   and links received since `since` (default: last 15 minutes), for forms that
+   email a security code:
+
+   ```json
+   [ { "message_id": "uuid", "from": "no-reply@greenhouse.io", "subject": "Your security code",
+       "code": "X7K2P9QM", "link": null, "received_at": "..." } ]
+   ```
+
+### GET /agent/inbox?category=&page=&page_size=
+
+`category`: `confirmation`, `rejection`, `interview`, `assessment`, `offer`,
+`verification`, `recruiter`, `other`, `application` (sent applications),
+`important`, `outbound`.
+
+```json
+{
+  "id": "uuid", "direction": "inbound", "from_address": "recruiting@openai.com", "from_name": "OpenAI Recruiting",
+  "to": ["collins.adi@agent.example.com"], "subject": "Next steps", "snippet": "Hi Collins, ...",
+  "category": "interview", "summary": "OpenAI wants to schedule a call.", "important": true,
+  "application_id": "uuid", "job_id": "uuid", "triage_status": "done", "read_at": null, "received_at": "..."
+}
+```
+
+`GET /agent/inbox/:id` adds `text_body`, `links`, `attachments` (metadata)
+and `extracted` (`category`, `company`, `job_title`, `summary`,
+`action_required`, `action`, `deadline`, `verification_code`,
+`verification_link`, `matched_application`). Only plain text is stored; HTML
+is never rendered. `POST /agent/inbox/:id/read` with `{ "read": true }`.
+
+### GET /agent/answers · PUT /agent/answers · DELETE /agent/answers/:id
+
+Saved answers the agent reuses on every form. `PUT` upserts
+`{ "question": "...", "answer": "..." }` (questions match case- and
+punctuation-insensitively).
+
+### POST /webhooks/resend
+
+Public. Resend `email.received` webhook, verified with the Svix signature
+headers (`svix-id`, `svix-timestamp`, `svix-signature`) against
+`RESEND_WEBHOOK_SECRET` with a 5-minute replay window. Mail for addresses on
+`AGENT_MAIL_DOMAIN` is fetched from Resend's receiving API, stored per
+recipient (idempotent per Resend email id) and triaged in the background.
+
+| Status | Meaning |
+|---|---|
+| `200` | Accepted (including ignored events and unknown mailboxes) |
+| `401 INVALID_SIGNATURE` | Signature or timestamp check failed |
+| `503 INBOUND_DISABLED` | `AGENT_MAIL_DOMAIN` or `RESEND_WEBHOOK_SECRET` not set |
+| `500` | Fetching the email failed; Resend retries |
+
+---
+
+## Extension Devices
+
+The extension connects once through the dashboard handshake and then stays
+connected with a **device token** (no 15-minute reconnects).
+
+### POST /auth/extension-token/exchange
+
+Request: `{ "ext_token": "<single-use token>", "device_name": "optional" }`.
+The response now also carries the device credential:
+
+```json
+{
+  "data": {
+    "access_token": "eyJ...", "expires_at": "...",
+    "device_id": "uuid", "device_token": "<64 hex chars>",
+    "user": { "id": "uuid", "full_name": "Collins Adi", "email": "collinsadi20@gmail.com" }
+  }
+}
+```
+
+At most `EXTENSION_DEVICE_MAX_PER_USER` devices stay active; older ones are
+revoked.
+
+### POST /auth/extension/refresh
+
+Public; rate limit 60/hour per IP. `{ "device_token": "..." }` returns the
+same shape as the exchange with a **rotated** `device_token` — store it and
+discard the old one.
+
+| Error | Meaning |
+|---|---|
+| `401 DEVICE_TOKEN_ROTATED` | The token was replaced within the last 2 minutes (concurrent refresh): re-read the stored token and retry |
+| `401 DEVICE_REVOKED` | Revoked, unknown, or a reused old token (theft protection revokes the device): reconnect from the dashboard |
+
+### GET /auth/extension/devices · DELETE /auth/extension/devices/:id
+
+Lists active devices (`id`, `name`, `last_used_at`, `created_at`) and
+disconnects one.
+
+---
+
+## Agent Error Codes
+
+| Code | Meaning |
+|---|---|
+| `RUN_IN_PROGRESS` | A run is already running for this user |
+| `RESUME_REQUIRED` | No processed resume selected |
+| `MAILBOX_TAKEN` | Mailbox name already used |
+| `MAILBOX_DISABLED` | `AGENT_MAIL_DOMAIN` is not configured |
+| `NOT_CLAIMABLE` | The application is not waiting on the extension |
+| `UNSUPPORTED` | The active AI provider cannot do this (e.g. web search on OpenRouter) |
+| `PROVIDER_KEY_REQUIRED` | Switching to a provider without a valid key |
+| `INVALID_API_KEY` | Key format invalid or rejected by the provider |
+| `DEVICE_TOKEN_ROTATED`, `DEVICE_REVOKED` | See Extension Devices |
+| `INVALID_SIGNATURE`, `INBOUND_DISABLED` | See `POST /webhooks/resend` |
