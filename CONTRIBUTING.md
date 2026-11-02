@@ -94,7 +94,7 @@ Aethlara uses [Conventional Commits](https://www.conventionalcommits.org/).
 | `chore` | Build, tooling, dependencies |
 | `perf` | Performance improvement |
 
-**Scopes:** `client`, `server`, `auth`, `jobs`, `resume`, `settings`, `analytics`, `tracker`, `docs`, `ci`
+**Scopes:** `client`, `server`, `extension`, `agent`, `auth`, `jobs`, `resume`, `settings`, `analytics`, `tracker`, `prompts`, `docs`, `ci` — path-style scopes such as `server/agent` or `client/settings` are used for changes inside one area.
 
 **Examples:**
 
@@ -144,16 +144,18 @@ A quick map of where things live. For the full layout, see the root [`README.md`
 
 | Where | What goes there |
 |---|---|
-| `auth/`, `user/`, `resume/`, `job/`, `settings/`, `analytics/`, `apikey/` | Domain modules, each with `handler.go`, `service.go`, `repository.go`, `routes.go` |
-| `ai/openrouter.go` | The **single** OpenRouter call site. All AI requests go through here. |
+| `auth/`, `user/`, `resume/`, `job/`, `chat/`, `settings/`, `analytics/`, `apikey/` | Domain modules, each with `handler.go`, `service.go`, `repository.go`, `routes.go` |
+| `agent/` | The autopilot: profile, discovery + scoring, application pipeline, extension protocol, inbox triage, scheduler |
+| `agent/sources/` | Job-board clients (Greenhouse, Lever, Ashby, Remotive, Remote OK, Himalayas, Jobicy, Arbeitnow) — no DB access |
+| `ai/` | The **only** place that talks to AI providers (`anthropic.go` via the official Go SDK, `openrouter.go` over HTTP). Every call resolves the user's own key. |
 | `prompts/` | All AI system prompts. Versioned — don't mutate in place once shipped. |
-| `email/` | Resend email service + templates |
+| `email/` | Resend email service: transactional mail, agent sending, inbound fetch, webhook verification |
 | `storage/` | Cloudflare R2 client |
 | `middleware/` | Auth, rate limit, CORS, security headers, AI gate |
 | `database/` | Postgres connection + `migrations/` |
 | `config/` | Typed env loader that fails fast on missing vars |
 
-**When adding a new prompt**, put it in `server/internal/prompts/`. **When adding a new API module**, create `server/internal/{module}/` with the four standard files and register the routes in `server/cmd/api/main.go`.
+**When adding a new prompt**, put it in `server/internal/prompts/` with a version constant, and treat scraped/third-party text (postings, emails, form labels) as untrusted data inside the prompt. **When adding a new job source**, implement `sources.Source` in `server/internal/agent/sources/`, register it in `catalog.go`, and respect the board's API terms (attribution, polling limits). **When adding a new API module**, create `server/internal/{module}/` with the four standard files and register the routes in `server/cmd/api/main.go`.
 
 ---
 
