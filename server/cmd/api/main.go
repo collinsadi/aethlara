@@ -9,6 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	// Embed the timezone database: the Alpine image has none, and each
+	// user's sending window is evaluated in their own timezone.
+	_ "time/tzdata"
 
 	"github.com/go-chi/chi/v5"
 
