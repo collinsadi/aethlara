@@ -212,7 +212,9 @@ func (s *Service) findContact(ctx context.Context, userID string, lead *Lead, c 
 	}
 	if lead.ApplyEmail != nil && validEmail(*lead.ApplyEmail) {
 		if ci := candidateContact(*lead.ApplyEmail, lead.URL, true, nil, lead.Company); ci != nil {
-			return s.withMX(ctx, []*contactInfo{ci})
+			if got := s.withMX(ctx, []*contactInfo{ci}); got != nil {
+				return got
+			}
 		}
 	}
 
@@ -284,7 +286,8 @@ func (s *Service) findContact(ctx context.Context, userID string, lead *Lead, c 
 	return s.withMX(ctx, found)
 }
 
-// withMX returns the best-scoring address whose domain accepts mail.
+// withMX returns the best-scoring address that can receive mail: its
+// domain has MX records and it is not suppressed (see checkRecipient).
 func (s *Service) withMX(ctx context.Context, found []*contactInfo) *contactInfo {
 	for len(found) > 0 {
 		best := 0
@@ -294,8 +297,7 @@ func (s *Service) withMX(ctx context.Context, found []*contactInfo) *contactInfo
 			}
 		}
 		ci := found[best]
-		_, domain, _ := strings.Cut(ci.Email, "@")
-		if s.lookupMX(ctx, domain) {
+		if s.checkRecipient(ctx, ci.Email, true) == "" {
 			return ci
 		}
 		found = append(found[:best], found[best+1:]...)
