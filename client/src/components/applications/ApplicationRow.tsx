@@ -2,10 +2,11 @@ import { useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
   AlertTriangle,
+  AtSign,
   Briefcase,
   CheckCircle2,
+  Clock,
   ExternalLink,
-  FileText,
   Loader2,
   Mail,
   MessageSquareText,
@@ -17,12 +18,14 @@ import { ToneBadge } from '@/components/ToneBadge'
 import type { AgentApplication } from '@/lib/agentTypes'
 import {
   APPLICATION_STATUS_META,
+  DELIVERY_STATUS_META,
   atsLabel,
   formatDateTime,
   formatRelative,
   hostOf,
   needsReasonMeta,
   pluralize,
+  recipientLabel,
   safeHref,
 } from '@/lib/agentFormat'
 import { scoreTone, toneBadge } from '@/lib/tones'
@@ -47,6 +50,7 @@ interface Props {
   onCancel: (app: AgentApplication) => void
   onCoverLetter: (app: AgentApplication) => void
   onMarkSubmitted: (app: AgentApplication) => void
+  onRecipient: (app: AgentApplication) => void
   marking: boolean
 }
 
@@ -61,6 +65,7 @@ export function ApplicationRow({
   onCancel,
   onCoverLetter,
   onMarkSubmitted,
+  onRecipient,
 }: Props) {
   const status = APPLICATION_STATUS_META[app.status]
   const needs = app.status === 'needs_input' ? app.needs : null
@@ -77,6 +82,12 @@ export function ApplicationRow({
   const cold = app.channel === 'cold_email'
   const email = app.channel === 'email' || cold
   const contactHref = cold ? safeHref(app.result?.contact_source) : null
+  const sourceHref = !cold ? safeHref(app.recipient_source) : null
+  const delivery = app.delivery_status ? DELIVERY_STATUS_META[app.delivery_status] : null
+  const undelivered = app.delivery_status === 'bounced' || app.delivery_status === 'suppressed' || app.delivery_status === 'failed'
+  // The agent needs an address, or the one it used didn't work.
+  const needsAddress = needs?.reason === 'no_email' || (app.status === 'failed' && (undelivered || email))
+  const scheduledAt = app.status === 'scheduled' ? app.scheduled_at : null
   const score = app.lead.score
   const ref = useRef<HTMLLIElement>(null)
 
@@ -115,10 +126,20 @@ export function ApplicationRow({
                 {!email && ats && <span className="text-foreground"> · {ats}</span>}
               </span>
               {app.attempts > 0 && <span>{pluralize(app.attempts, 'attempt')}</span>}
-              {app.status === 'submitted' && app.submitted_at ? (
-                <span title={formatDateTime(app.submitted_at)}>Submitted {formatRelative(app.submitted_at, now)}</span>
+              {scheduledAt ? (
+                <span className="inline-flex items-center gap-1 text-foreground" title={formatDateTime(scheduledAt)}>
+                  <Clock className="size-3" aria-hidden />
+                  Sends {formatRelative(scheduledAt, now)}
+                </span>
+              ) : app.status === 'submitted' && app.submitted_at ? (
+                <span title={formatDateTime(app.submitted_at)}>Sent {formatRelative(app.submitted_at, now)}</span>
               ) : (
                 <span title={formatDateTime(app.updated_at)}>Updated {formatRelative(app.updated_at, now)}</span>
+              )}
+              {delivery && app.status === 'submitted' && (
+                <ToneBadge tone={delivery.tone} title={app.delivery_detail || delivery.help}>
+                  {delivery.label}
+                </ToneBadge>
               )}
               {app.status === 'in_progress' && app.claim_expires_at && (
                 <span>
@@ -159,9 +180,26 @@ export function ApplicationRow({
         </div>
       )}
 
-      {cold && app.status === 'submitted' && (
+      {!cold && email && app.recipient_kind && (app.status === 'scheduled' || app.status === 'submitted') && (
         <p className="mt-3 text-xs text-muted-foreground">
-          The posting couldn&apos;t be read, so the agent emailed{' '}
+          {app.status === 'scheduled' ? 'Goes to ' : 'Went to '}
+          <span className="break-all font-medium text-foreground">{app.apply_email}</span>, {recipientLabel(app.recipient_kind)}
+          {sourceHref && app.recipient_kind !== 'posting' && (
+            <>
+              {' '}(published on{' '}
+              <a href={sourceHref} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-brand">
+                {hostOf(sourceHref)}
+              </a>
+              )
+            </>
+          )}
+          .{app.status === 'scheduled' && ' You can still cancel it.'}
+        </p>
+      )}
+
+      {cold && (app.status === 'submitted' || app.status === 'scheduled') && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          The posting couldn&apos;t be read, so the agent {app.status === 'scheduled' ? 'will email' : 'emailed'}{' '}
           <span className="break-all font-medium text-foreground">{app.apply_email}</span> directly with your resume
           {contactHref && (
             <>
@@ -199,13 +237,19 @@ export function ApplicationRow({
       )}
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
+        {needsAddress && (
+          <button type="button" onClick={() => onRecipient(app)} className={needs ? ui.primarySm : ui.outline}>
+            <AtSign className="size-3.5" aria-hidden />
+            {needs ? 'Add an address' : 'Send to another address'}
+          </button>
+        )}
         {hasQuestions && (
           <button type="button" onClick={() => onAnswer(app)} className={ui.primarySm}>
             <MessageSquareText className="size-3.5" aria-hidden />
             Answer {pluralize(needs!.questions!.length, 'question')}
           </button>
         )}
-        {needs && formHref && (
+        {needs && needs.reason !== 'no_email' && formHref && (
           <a href={formHref} target="_blank" rel="noopener noreferrer" className={hasQuestions ? ui.outline : ui.primarySm}>
             <ExternalLink className="size-3.5" aria-hidden />
             Open the form
@@ -232,8 +276,8 @@ export function ApplicationRow({
         )}
         {app.has_cover_letter && (
           <button type="button" onClick={() => onCoverLetter(app)} className={ui.outline}>
-            {cold ? <Mail className="size-3.5" aria-hidden /> : <FileText className="size-3.5" aria-hidden />}
-            {cold ? 'Email sent' : 'Cover letter'}
+            <Mail className="size-3.5" aria-hidden />
+            {app.status === 'submitted' ? 'Email sent' : 'View email'}
           </button>
         )}
         {!needs && !email && formHref && app.status !== 'submitted' && (

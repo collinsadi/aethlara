@@ -74,7 +74,7 @@ function AnswerForm({ application, onDone }: { application: AgentApplication; on
       {
         onSuccess: () => {
           toast.success('Answers saved', {
-            description: 'The agent reuses them on future forms and hands this application back to the extension.',
+            description: 'The agent saves them for later and prepares this application again on the next run.',
           })
           onDone()
         },
@@ -95,7 +95,7 @@ function AnswerForm({ application, onDone }: { application: AgentApplication; on
 
       {questions.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          The extension didn't send the questions. Open the form to see what it needs, then click Retry.
+          No questions were recorded for this application. Click Retry to prepare it again.
         </p>
       ) : (
         questions.map((q, i) => {

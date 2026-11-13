@@ -1,4 +1,4 @@
-import { FileText } from 'lucide-react'
+import { Mail } from 'lucide-react'
 import { CopyButton } from '@/components/CopyButton'
 import { EmptyState } from '@/components/EmptyState'
 import { ErrorState } from '@/components/ErrorState'
@@ -18,7 +18,7 @@ interface Props {
   onOpenChange: (open: boolean) => void
 }
 
-/** Shows the cover letter the agent wrote (GET /agent/applications/:id). */
+/** Shows the email the agent wrote for an application (GET /agent/applications/:id). */
 export function CoverLetterDialog({ application, onOpenChange }: Props) {
   const { data, isLoading, isError, error, refetch, isRefetching } = useApplication(application?.id ?? null)
   const letter = data?.cover_letter?.trim() ?? ''
@@ -30,15 +30,17 @@ export function CoverLetterDialog({ application, onOpenChange }: Props) {
           <div className="flex items-start justify-between gap-3 pr-8">
             <div>
               <DialogTitle className="text-base font-semibold">
-                {application?.channel === 'cold_email' ? 'Email sent' : 'Cover letter'}
+                {application?.status === 'submitted' ? 'Email sent' : 'Application email'}
               </DialogTitle>
               {application && (
                 <DialogDescription>
                   {application.lead.title} at {application.lead.company}
+                  {application.apply_email && ` · to ${application.apply_email}`}. Your resume is attached and your
+                  contact details are added under your name.
                 </DialogDescription>
               )}
             </div>
-            {letter && <CopyButton value={letter} label="Copy cover letter">Copy</CopyButton>}
+            {letter && <CopyButton value={letter} label="Copy email">Copy</CopyButton>}
           </div>
         </DialogHeader>
         {isLoading ? (
@@ -48,7 +50,7 @@ export function CoverLetterDialog({ application, onOpenChange }: Props) {
             ))}
           </div>
         ) : isError ? (
-          <ErrorState compact error={error} title="Couldn't load the cover letter" onRetry={() => refetch()} retrying={isRefetching} />
+          <ErrorState compact error={error} title="Couldn't load the email" onRetry={() => refetch()} retrying={isRefetching} />
         ) : letter ? (
           <div className="whitespace-pre-wrap break-words rounded-xl border border-border bg-muted/20 p-4 text-sm leading-relaxed text-foreground">
             {letter}
@@ -56,9 +58,9 @@ export function CoverLetterDialog({ application, onOpenChange }: Props) {
         ) : (
           <EmptyState
             compact
-            icon={FileText}
-            title="No cover letter"
-            description="Cover letters are written when the application is prepared (if they're turned on in your apply rules)."
+            icon={Mail}
+            title="Not written yet"
+            description="The email is written when the application is prepared on the next run."
           />
         )}
       </DialogContent>

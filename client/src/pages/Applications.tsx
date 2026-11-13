@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Send } from 'lucide-react'
-import { ExtensionWarning } from '@/components/agent/ExtensionWarning'
 import { AnswerQuestionsDialog } from '@/components/applications/AnswerQuestionsDialog'
 import { ApplicationGroup, type ApplicationActions } from '@/components/applications/ApplicationGroup'
 import { CoverLetterDialog } from '@/components/applications/CoverLetterDialog'
+import { RecipientDialog } from '@/components/applications/RecipientDialog'
+import { SendingPanel } from '@/components/applications/SendingPanel'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { EmptyState } from '@/components/EmptyState'
 import { PageHeader } from '@/components/PageHeader'
-import { useAgentOverview } from '@/hooks/useAgent'
+import { useAgentOverview, useEnsureSendTimezone } from '@/hooks/useAgent'
 import {
   useApplication,
   useCancelApplication,
@@ -22,7 +23,7 @@ import { toast } from '@/lib/toast'
 
 const GROUPS = {
   needs: 'needs_input,failed',
-  active: 'queued,preparing,ready,in_progress',
+  active: 'queued,preparing,scheduled,ready,in_progress',
   submitted: 'submitted',
   cancelled: 'cancelled',
 } as const
@@ -39,9 +40,12 @@ export function Applications() {
   const [markingId, setMarkingId] = useState<string | null>(null)
 
   const [answering, setAnswering] = useState<AgentApplication | null>(null)
+  const [redirecting, setRedirecting] = useState<AgentApplication | null>(null)
   const [coverFor, setCoverFor] = useState<AgentApplication | null>(null)
   const [cancelling, setCancelling] = useState<AgentApplication | null>(null)
   const [retryingId, setRetryingId] = useState<string | null>(null)
+
+  useEnsureSendTimezone(overview.data?.profile)
 
   // Let the highlight ring fade after the row has been scrolled into view.
   useEffect(() => {
@@ -76,17 +80,15 @@ export function Applications() {
       })
     },
     onAnswer: setAnswering,
+    onRecipient: setRedirecting,
     onCoverLetter: setCoverFor,
     onCancel: setCancelling,
     onRetry: (app) => {
       setRetryingId(app.id)
       retry.mutate(app.id, {
-        onSuccess: (updated) =>
+        onSuccess: () =>
           toast.success('Back in the queue', {
-            description:
-              updated.status === 'ready'
-                ? `${app.lead.title} is ready for the extension again.`
-                : `${app.lead.title} will be retried on the next run.`,
+            description: `${app.lead.title} is prepared again on the next run and scheduled to send.`,
           }),
         onError: (err) => toast.error("Couldn't retry", { description: friendlyErrorMessage(err) }),
         onSettled: () => setRetryingId(null),
@@ -125,14 +127,14 @@ export function Applications() {
         }
       />
 
-      {overview.data && <ExtensionWarning overview={overview.data} />}
+      {overview.data && <SendingPanel overview={overview.data} />}
 
       {nothingYet ? (
         <div className="glass-card">
           <EmptyState
             icon={Send}
             title="No applications yet"
-            description="Approve jobs in Review and the agent applies on its next run — by email, or through the Chrome extension for form applications."
+            description="Approve jobs in Review and the agent prepares an email application for each on its next run, then sends them one at a time inside your sending window."
             action={
               <Link to="/review" className={ui.primarySm}>
                 Go to Review
@@ -145,7 +147,7 @@ export function Applications() {
           <ApplicationGroup
             id="needs-you"
             title="Needs you"
-            description="Questions only you can answer, sites that need you, and failures to retry."
+            description="Applications with no address to send to, emails that bounced, and failures to retry."
             status={GROUPS.needs}
             count={sum(GROUPS.needs)}
             tone="warning"
@@ -155,7 +157,7 @@ export function Applications() {
           <ApplicationGroup
             id="in-progress"
             title="In progress"
-            description="Queued for the next run, being prepared, or waiting for the Chrome extension."
+            description="Queued for the next run, being prepared, or scheduled to send. Cancel anything that hasn't gone out."
             status={GROUPS.active}
             count={activeCount}
             tone="brand"
@@ -166,7 +168,7 @@ export function Applications() {
           <ApplicationGroup
             id="submitted"
             title="Submitted"
-            description="Sent. Replies to your agent mailbox move these along your tracker automatically."
+            description="Emailed. Delivery is confirmed by the provider, and replies to your agent mailbox move these along your tracker."
             status={GROUPS.submitted}
             count={sum(GROUPS.submitted)}
             tone="success"
@@ -190,13 +192,14 @@ export function Applications() {
 
       <AnswerQuestionsDialog application={answering} onOpenChange={(open) => !open && setAnswering(null)} />
       <CoverLetterDialog application={coverFor} onOpenChange={(open) => !open && setCoverFor(null)} />
+      <RecipientDialog application={redirecting} onOpenChange={(open) => !open && setRedirecting(null)} />
       <ConfirmDialog
         open={!!cancelling}
         onOpenChange={(open) => !open && setCancelling(null)}
         title="Cancel this application?"
         description={
           cancelling
-            ? `${cancelling.lead.title} at ${cancelling.lead.company} won't be submitted and the job moves to Dismissed. You can retry it later from Cancelled.`
+            ? `${cancelling.lead.title} at ${cancelling.lead.company} won't be emailed and the job moves to Dismissed. You can retry it later from Cancelled.`
             : undefined
         }
         confirmLabel="Cancel application"

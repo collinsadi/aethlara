@@ -18,6 +18,7 @@ export interface ApplicationActions {
   onCancel: (app: AgentApplication) => void
   onCoverLetter: (app: AgentApplication) => void
   onMarkSubmitted: (app: AgentApplication) => void
+  onRecipient: (app: AgentApplication) => void
   markingId: string | null
 }
 
@@ -131,6 +132,7 @@ export function ApplicationGroup({
                     onMarkSubmitted={actions.onMarkSubmitted}
                     marking={actions.markingId === app.id}
                     onCoverLetter={actions.onCoverLetter}
+                    onRecipient={actions.onRecipient}
                   />
                 ))}
               </ul>
