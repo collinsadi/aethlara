@@ -30,7 +30,8 @@ func isUniqueViolation(err error) bool {
 // ── Profiles ──────────────────────────────────────────────────────────────────
 
 const profileCols = `user_id, enabled, resume_id, mailbox_address, search_prefs, application_profile,
-	apply_settings, run_interval_hours, next_run_at, last_run_at, created_at, updated_at`
+	apply_settings, run_interval_hours, next_run_at, last_run_at, sending_paused_until, sending_pause_reason,
+	created_at, updated_at`
 
 func scanProfile(row pgx.Row) (*Profile, error) {
 	var (
@@ -38,7 +39,8 @@ func scanProfile(row pgx.Row) (*Profile, error) {
 		search, appProf, applyS []byte
 	)
 	err := row.Scan(&p.UserID, &p.Enabled, &p.ResumeID, &p.MailboxAddress, &search, &appProf,
-		&applyS, &p.RunIntervalHours, &p.NextRunAt, &p.LastRunAt, &p.CreatedAt, &p.UpdatedAt)
+		&applyS, &p.RunIntervalHours, &p.NextRunAt, &p.LastRunAt, &p.SendingPausedUntil, &p.SendingPauseReason,
+		&p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

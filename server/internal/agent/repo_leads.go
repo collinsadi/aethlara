@@ -183,15 +183,17 @@ func (r *Repository) UpdateLeadPosting(ctx context.Context, id, description, pos
 }
 
 // LastColdEmail returns when the user's agent last cold-emailed address
-// (case-insensitive) after since, and the role it was about.
+// (case-insensitive) after since, or has one scheduled, and the role it
+// was about.
 func (r *Repository) LastColdEmail(ctx context.Context, userID, address string, since time.Time) (*time.Time, string, error) {
 	var at time.Time
 	var title string
 	err := r.db.QueryRow(ctx, `
-		SELECT a.submitted_at, l.title FROM applications a JOIN job_leads l ON l.id = a.lead_id
-		WHERE a.user_id = $1 AND a.channel = 'cold_email' AND a.status = 'submitted'
-		  AND lower(a.apply_email) = lower($2) AND a.submitted_at > $3
-		ORDER BY a.submitted_at DESC LIMIT 1`, userID, address, since).Scan(&at, &title)
+		SELECT COALESCE(a.submitted_at, o.scheduled_at), l.title
+		FROM applications a JOIN job_leads l ON l.id = a.lead_id LEFT JOIN agent_outbox o ON o.id = a.outbox_id
+		WHERE a.user_id = $1 AND a.channel = 'cold_email' AND lower(a.apply_email) = lower($2)
+		  AND ((a.status = 'submitted' AND a.submitted_at > $3) OR a.status = 'scheduled')
+		ORDER BY 1 DESC LIMIT 1`, userID, address, since).Scan(&at, &title)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", nil
 	}
@@ -291,10 +293,10 @@ func (r *Repository) ExpireStaleLeads(ctx context.Context, userID string, cutoff
 
 const appCols = `a.id, a.user_id, a.lead_id, a.job_id, a.channel, a.status, a.apply_url, a.apply_email, a.ats,
 	a.cover_letter, a.use_original_resume, a.attempts, a.last_error, a.needs, a.result, a.claimed_at,
-	a.claim_expires_at, a.submitted_at, a.created_at, a.updated_at,
-	l.title, l.company, l.match_score, l.url`
+	a.claim_expires_at, a.submitted_at, a.outbox_id, a.recipient_kind, a.recipient_source, a.created_at, a.updated_at,
+	l.title, l.company, l.match_score, l.url, o.scheduled_at, o.delivery_status, o.delivery_detail`
 
-const appFrom = ` FROM applications a JOIN job_leads l ON l.id = a.lead_id `
+const appFrom = ` FROM applications a JOIN job_leads l ON l.id = a.lead_id LEFT JOIN agent_outbox o ON o.id = a.outbox_id `
 
 func scanApp(row pgx.Row) (*Application, error) {
 	var (
@@ -304,8 +306,9 @@ func scanApp(row pgx.Row) (*Application, error) {
 	)
 	err := row.Scan(&a.ID, &a.UserID, &a.LeadID, &a.JobID, &a.Channel, &a.Status, &a.ApplyURL, &a.ApplyEmail,
 		&a.ATS, &a.CoverLetter, &a.UseOriginalResume, &a.Attempts, &a.LastError, &needs, &result,
-		&a.ClaimedAt, &a.ClaimExpiresAt, &a.SubmittedAt, &a.CreatedAt, &a.UpdatedAt,
-		&a.LeadTitle, &a.LeadCompany, &a.LeadScore, &a.LeadURL)
+		&a.ClaimedAt, &a.ClaimExpiresAt, &a.SubmittedAt, &a.OutboxID, &a.RecipientKind, &a.RecipientSource,
+		&a.CreatedAt, &a.UpdatedAt, &a.LeadTitle, &a.LeadCompany, &a.LeadScore, &a.LeadURL,
+		&a.ScheduledAt, &a.DeliveryStatus, &a.DeliveryDetail)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -329,7 +332,7 @@ func (r *Repository) QueueApplication(ctx context.Context, userID, leadID string
 		INSERT INTO applications (user_id, lead_id, status) VALUES ($1, $2, 'queued')
 		ON CONFLICT (lead_id) DO UPDATE SET
 			status = 'queued', last_error = NULL, needs = NULL, claimed_at = NULL, claim_expires_at = NULL,
-			updated_at = NOW()
+			outbox_id = NULL, updated_at = NOW()
 		WHERE applications.status IN ('cancelled', 'failed')`, userID, leadID)
 	if err != nil {
 		return nil, err
@@ -389,10 +392,11 @@ func (r *Repository) SaveApplication(ctx context.Context, a *Application) error 
 		UPDATE applications SET job_id = $3, channel = $4, status = $5, apply_url = $6, apply_email = $7,
 			ats = $8, cover_letter = $9, use_original_resume = $10, attempts = $11, last_error = $12,
 			needs = $13, result = $14, claimed_at = $15, claim_expires_at = $16, submitted_at = $17,
-			updated_at = NOW()
+			outbox_id = $18, recipient_kind = $19, recipient_source = $20, updated_at = NOW()
 		WHERE user_id = $1 AND id = $2`,
 		a.UserID, a.ID, a.JobID, a.Channel, a.Status, a.ApplyURL, a.ApplyEmail, a.ATS, a.CoverLetter,
-		a.UseOriginalResume, a.Attempts, a.LastError, needs, result, a.ClaimedAt, a.ClaimExpiresAt, a.SubmittedAt)
+		a.UseOriginalResume, a.Attempts, a.LastError, needs, result, a.ClaimedAt, a.ClaimExpiresAt, a.SubmittedAt,
+		a.OutboxID, a.RecipientKind, a.RecipientSource)
 	return err
 }
 

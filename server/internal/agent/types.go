@@ -1,9 +1,11 @@
 // Package agent is the autopilot: it searches job boards for postings that
 // match the user, scores them against their resume, lets the user approve
-// the ones worth applying to, and on the next run applies to them — by email
-// from the agent's own mailbox, or by queueing them for the browser
-// extension. Mail that comes back is triaged and moves applications along
-// the tracker automatically.
+// the ones worth applying to, and on the next run prepares each application
+// as an email from the agent's own mailbox. Emails go out later, one at a
+// time, from a send queue (agent_outbox) that spaces them out inside the
+// user's sending window; delivery outcomes come back from Resend and
+// addresses that bounce or complain are suppressed. Mail that comes back is
+// triaged and moves applications along the tracker automatically.
 package agent
 
 import (
@@ -44,18 +46,55 @@ const (
 	AppReady      = "ready"
 	AppInProgress = "in_progress"
 	AppNeedsInput = "needs_input"
-	AppSubmitted  = "submitted"
-	AppFailed     = "failed"
-	AppCancelled  = "cancelled"
+	// AppScheduled: prepared; its email waits in the send queue.
+	AppScheduled = "scheduled"
+	AppSubmitted = "submitted"
+	AppFailed    = "failed"
+	AppCancelled = "cancelled"
 )
 
-// Application channels.
+// Application channels. Every new application is an email; "browser"
+// (the Chrome extension filling the form) only appears on old rows.
 const (
 	ChannelBrowser = "browser"
 	ChannelEmail   = "email"
 	// ChannelColdEmail: the posting could not be read, so the agent emailed
 	// an address the company publishes, with the original resume.
 	ChannelColdEmail = "cold_email"
+)
+
+// Where an application's address came from (applications.recipient_kind).
+const (
+	RecipientPosting = "posting" // the posting says to email it
+	RecipientHiring  = "hiring"  // careers@, jobs@ ... published by the company
+	RecipientGeneral = "general" // hello@, contact@ ... published by the company
+	RecipientPerson  = "person"  // a person named on a job page
+	RecipientUser    = "user"    // typed in by the user
+)
+
+// Outbox statuses.
+const (
+	OutboxScheduled = "scheduled"
+	OutboxSending   = "sending"
+	OutboxSent      = "sent"
+	OutboxFailed    = "failed"
+	OutboxCancelled = "cancelled"
+)
+
+// Outbox kinds.
+const (
+	OutboxApplication = "application"
+	OutboxColdEmail   = "cold_email"
+)
+
+// Delivery outcomes reported by Resend (agent_outbox.delivery_status).
+const (
+	DeliveryDelayed    = "delayed"
+	DeliveryDelivered  = "delivered"
+	DeliveryFailed     = "failed"
+	DeliverySuppressed = "suppressed"
+	DeliveryBounced    = "bounced"
+	DeliveryComplained = "complained"
 )
 
 // SearchPrefs describes what the agent looks for (agent_profiles.search_prefs).
@@ -112,10 +151,11 @@ type ApplicationProfile struct {
 
 // ApplySettings are the agent's rules for applying (agent_profiles.apply_settings).
 type ApplySettings struct {
-	// AutoSubmit lets the extension press "Submit" when every required field
-	// is filled; otherwise it stops at a filled form for review.
+	// AutoSubmit let the extension press "Submit" on application forms.
+	// Applying is email-only now, so it only matters to older extensions.
 	AutoSubmit bool `json:"auto_submit"`
-	// DailyLimit caps submitted applications per rolling 24 hours.
+	// DailyLimit caps application emails per day. A new mailbox starts
+	// lower and ramps up to it (warm-up, see schedule.go).
 	DailyLimit int `json:"daily_limit"`
 	// AutoApproveScore approves new leads scoring at or above it without
 	// review. nil = always ask.
@@ -126,6 +166,16 @@ type ApplySettings struct {
 	// ColdEmailFallback: when a posting cannot be read, email an address
 	// the company publishes instead of failing the application.
 	ColdEmailFallback bool `json:"cold_email_fallback"`
+
+	// Sending. Prepared emails wait at least SendDelayMinutes (the undo
+	// window), then go out one at a time between SendWindowStart and
+	// SendWindowEnd (hours, 0-24) in SendTimezone (IANA name; "" = UTC),
+	// on weekdays only when SendWeekdaysOnly.
+	SendDelayMinutes int    `json:"send_delay_minutes"`
+	SendWindowStart  int    `json:"send_window_start"`
+	SendWindowEnd    int    `json:"send_window_end"`
+	SendWeekdaysOnly bool   `json:"send_weekdays_only"`
+	SendTimezone     string `json:"send_timezone"`
 }
 
 // Profile is the agent configuration for one user.
@@ -140,8 +190,17 @@ type Profile struct {
 	RunIntervalHours   int
 	NextRunAt          *time.Time
 	LastRunAt          *time.Time
+	// SendingPausedUntil holds scheduled emails back (set by the user, or
+	// by the circuit breaker after bounces or a spam complaint).
+	SendingPausedUntil *time.Time
+	SendingPauseReason *string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+}
+
+// SendingPaused reports whether scheduled emails are held back at now.
+func (p *Profile) SendingPaused(now time.Time) bool {
+	return p.SendingPausedUntil != nil && p.SendingPausedUntil.After(now)
 }
 
 // Run is one execution of the agent loop.
@@ -166,10 +225,13 @@ type RunStats struct {
 	StrongMatches   int               `json:"strong_matches"`
 	AutoApproved    int               `json:"auto_approved"`
 	Prepared        int               `json:"prepared"`
-	EmailsSent      int               `json:"emails_sent"`
-	ReadyForBrowser int               `json:"ready_for_browser"`
-	Failed          int               `json:"failed"`
-	MessagesTriaged int               `json:"messages_triaged"`
+	EmailsScheduled int               `json:"emails_scheduled"`
+	// EmailsSent counts emails sent during the run; since sending moved to
+	// the send queue it only appears on runs from before.
+	EmailsSent      int `json:"emails_sent"`
+	ReadyForBrowser int `json:"ready_for_browser"`
+	Failed          int `json:"failed"`
+	MessagesTriaged int `json:"messages_triaged"`
 }
 
 // Event is one entry in the activity feed.
@@ -195,6 +257,7 @@ const (
 	EventSourceError   = "source_error"
 	EventLeadApproved  = "lead_approved"
 	EventPrepared      = "application_prepared"
+	EventScheduled     = "application_scheduled"
 	EventEmailSent     = "application_emailed"
 	EventSubmitted     = "application_submitted"
 	EventNeedsInput    = "application_needs_input"
@@ -202,6 +265,9 @@ const (
 	EventMailReceived  = "mail_received"
 	EventStatusChanged = "status_changed"
 	EventDigestSent    = "digest_sent"
+	EventEmailBounced  = "email_bounced"
+	EventComplaint     = "email_complained"
+	EventSendingPaused = "sending_paused"
 )
 
 // Lead is a discovered posting.
@@ -263,6 +329,9 @@ type Application struct {
 	ClaimedAt         *time.Time
 	ClaimExpiresAt    *time.Time
 	SubmittedAt       *time.Time
+	OutboxID          *string
+	RecipientKind     *string
+	RecipientSource   *string
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 
@@ -271,11 +340,38 @@ type Application struct {
 	LeadCompany string
 	LeadScore   *int
 	LeadURL     string
+
+	// Joined from agent_outbox (read-only).
+	ScheduledAt    *time.Time
+	DeliveryStatus *string
+	DeliveryDetail *string
+}
+
+// OutboxEmail is one email in the send queue.
+type OutboxEmail struct {
+	ID             string
+	UserID         string
+	Kind           string
+	ToAddress      string
+	Subject        string
+	Body           string // without the signature
+	ResumeJobID    *string
+	ResumeID       *string
+	Status         string
+	ScheduledAt    time.Time
+	LockedUntil    *time.Time
+	Attempts       int
+	LastError      *string
+	ProviderID     *string
+	SentAt         *time.Time
+	DeliveryStatus *string
+	DeliveryDetail *string
+	CreatedAt      time.Time
 }
 
 // Needs explains why an application is waiting on the user.
 type Needs struct {
-	Reason    string     `json:"reason"` // missing_answers|captcha|login_required|unsupported_form|review
+	Reason    string     `json:"reason"` // no_email|missing_answers|captcha|login_required|unsupported_form|review
 	Message   string     `json:"message"`
 	Questions []Question `json:"questions,omitempty"`
 	PageURL   string     `json:"page_url,omitempty"`
