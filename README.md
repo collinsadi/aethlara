@@ -50,8 +50,8 @@ Aethlara is an open-source job-hunting agent. Upload your resume and tell it wha
 1. **It searches.** Company boards on Greenhouse, Lever and Ashby from your watchlist, the big remote boards (Remotive, Remote OK, Himalayas, Jobicy, Arbeitnow), and — with an Anthropic key — Claude web search.
 2. **It scores.** Every posting is matched against your resume and preferences, with a one-line reason, strengths and gaps. Deal-breakers (location, authorization, seniority, salary) are filtered out before you ever see them.
 3. **You approve.** Triage the queue in seconds (keyboard shortcuts, bulk actions). Approval is the only manual step.
-4. **It applies on the next run.** Each approved job gets a tailored resume and cover letter. Email applications are sent from your agent's own mailbox; form applications (Greenhouse, Lever, Ashby and more) are filled and submitted by the Chrome extension in your browser.
-5. **It follows up.** Replies land in the agent's mailbox, get triaged by AI, and move your tracker automatically — confirmations, rejections, interview invites, assessments and offers. Verification codes are picked up and entered for you. Anything that needs you (an unusual question, a CAPTCHA) is asked once and remembered.
+4. **It applies by email.** Each approved job gets a tailored resume and a tailored email, sent from your agent's own mailbox to the address in the posting, or to the hiring address the company publishes (careers@, jobs@…), or to one you give it. Emails don't go out in a burst: they wait in a send queue and leave one at a time, minutes apart, during your sending hours, with a warm-up for new mailboxes and bounce/spam-complaint protection so they land in the inbox.
+5. **It follows up.** Replies land in the agent's mailbox, get triaged by AI, and move your tracker automatically — confirmations, rejections, interview invites, assessments and offers. When no address can be found, or an email bounces, it asks you for one.
 
 **The approach.** Aethlara is fully open source under MIT and runs on your own AI key — Anthropic (recommended; enables web search) or OpenRouter — encrypted with AES-256-GCM. No subscriptions, no lock-in, no training on your data. Self-hosting is a `docker compose up` away.
 
@@ -59,20 +59,21 @@ Aethlara is an open-source job-hunting agent. Upload your resume and tell it wha
 
 ## Features
 
-- **Autopilot** — scheduled runs (every 1–168 hours) or "Run now": apply to what you approved, discover new jobs, email you a digest
+- **Autopilot** — scheduled runs (every 1–168 hours) or "Run now": prepare what you approved, discover new jobs, email you a digest
 - **Job discovery** — Greenhouse / Lever / Ashby company watchlist (starter list included), Remotive, Remote OK, Himalayas, Jobicy, Arbeitnow and Claude web search; responses cached and shared across users
 - **AI match scoring** — batched, prompt-cached scoring on your fast model with fit, reasons, gaps and deal-breakers; low scores auto-dismissed, optional auto-approve threshold
 - **Review queue** — keyboard-first triage (J/K/A/X/O), bulk approve, filters, undo, "add a job by URL"
-- **Hands-free applying** — tailored resume + cover letter per job; email applications sent from the agent's address with the PDF attached; form applications queued for the Chrome extension with a lease-based claim protocol
+- **Email applications** — tailored resume + tailored email per job, sent from the agent's address with the PDF attached, to the posting's address or one the company publishes (never guessed); a cold-email fallback when the posting can't be read
+- **Paced, deliverable sending** — a send queue with an undo delay, per-user sending hours and timezone, random gaps, per-recipient spacing, daily caps with mailbox warm-up, idempotent sends, delivery/bounce/complaint tracking, a platform-wide suppression list, automatic pauses, and periodic SPF/DKIM/DMARC/tracking/webhook checks (`go run ./cmd/mailcheck`)
 - **Agent mailbox** — every user gets `name@your-agent-domain` (Resend Inbound); applications use it so replies come back to the agent; Svix-signed webhook, idempotent ingestion, SPF/DKIM/DMARC-aware
-- **Inbox triage** — AI classifies mail (confirmation, rejection, interview, assessment, offer, verification, recruiter) and advances the tracker; important mail alerts; verification codes exposed to the extension
+- **Inbox triage** — AI classifies mail (confirmation, rejection, interview, assessment, offer, verification, recruiter) and advances the tracker; important mail alerts
 - **Learned answers** — questions the agent cannot answer are asked once and reused on every later form
 - **Anthropic + OpenRouter** — bring either key; smart/fast model slots per user; official Anthropic Go SDK with structured outputs, prompt caching, adaptive thinking and server-side refusal fallbacks
 - **Resume upload + AI extraction** — PDF, DOCX or Markdown to structured JSON
 - **Tailored PDF resumes + match scoring** — per job, stored on Cloudflare R2
 - **Kanban tracker + analytics** — updated automatically by the agent
 - **Per-job AI chat** — strategy, interview prep, cover letter drafting
-- **Chrome extension** — long-lived revocable device auth, autopilot runner, popup and side panel, ATS-aware form filling with resume upload
+- **Chrome extension** — long-lived revocable device auth, popup and side panel, send any posting to the agent or into your tracker
 - **Passwordless OTP auth**, encrypted API keys, light and dark mode
 
 ---
@@ -202,7 +203,8 @@ The full variable reference lives in [`server/.env.example`](./server/.env.examp
 | `ANTHROPIC_MODEL` / `ANTHROPIC_FAST_MODEL` | Default smart/fast models for Anthropic users (`claude-opus-5-5` / `claude-haiku-5-5`) |
 | `OPENROUTER_MODEL` / `OPENROUTER_FAST_MODEL` | Default smart/fast models for OpenRouter users |
 | `AGENT_MAIL_DOMAIN` | Subdomain whose MX points at Resend Inbound, e.g. `agent.example.com` (empty disables agent mailboxes) |
-| `RESEND_WEBHOOK_SECRET` | Signing secret of the Resend `email.received` webhook |
+| `RESEND_WEBHOOK_SECRET` | Signing secret of the Resend webhook (`email.received` plus the delivery events `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`, `email.failed`, `email.suppressed`) |
+| `AGENT_MAIL_*` | Send queue pacing: hourly cap across mailboxes, per-mailbox daily ceiling, gap between emails, worker on/off |
 | `AGENT_SCHEDULER_*`, `AGENT_MAX_*` | Scheduler tick, concurrency, run timeout and per-run scoring cap |
 
 > **Important.** `API_KEY_ENCRYPTION_SECRET` must be exactly **32 bytes** (64 hex chars). Generate one with:
@@ -217,7 +219,9 @@ The full variable reference lives in [`server/.env.example`](./server/.env.examp
 
 ## Chrome Extension
 
-The `extension/` folder contains the Aethlara Chrome extension (Manifest V3, v2). It is the autopilot's hands: the server finds and scores jobs, you approve the ones worth applying to, and the extension fills and submits those applications **in your own browser**, then reports the outcome back to Aethlara.
+The `extension/` folder contains the Aethlara Chrome extension (Manifest V3, v2).
+
+> **Applying is email-only.** The autopilot now emails every application from the agent mailbox, so the server no longer hands applications to the extension and its *Apply automatically* runner has nothing to do. The extension is still useful for sending a posting you are looking at to the agent, reviewing leads, and extracting jobs into your tracker. The section below describes v2 as shipped.
 
 ### What it does
 
@@ -299,18 +303,19 @@ All responses follow a consistent envelope:
 ```mermaid
 flowchart TD
     subgraph Run["Autopilot run (scheduled or Run now)"]
-        A[Approved leads] --> B[Tailor resume + cover letter<br/>smart model]
-        B --> C{Apply channel}
-        C -->|Email| D[Send from agent mailbox<br/>Resend + PDF]
-        C -->|Form| E[Queue for extension]
+        A[Approved leads] --> B[Tailor resume<br/>smart model]
+        B --> C[Find the address:<br/>posting, company site, or yours]
+        C --> E[Write the email<br/>+ spam lint]
+        E --> Q[Send queue:<br/>delay, window, gaps, warm-up]
         F[Sources: ATS watchlist,<br/>remote boards, web search] --> G[Prefilter + dedupe]
         G --> H[Batched scoring<br/>fast model, prompt-cached]
         H --> I[Review queue]
     end
     I -->|You approve| A
-    E --> J[Chrome extension claims,<br/>fills, uploads, submits]
-    J --> K[Tracker: applied]
-    D --> K
+    Q --> D[Worker sends from agent mailbox<br/>Resend + PDF, idempotent]
+    D --> K[Tracker: applied]
+    D --> P[Delivery events:<br/>delivered / bounced / spam]
+    P --> S[Suppress bad addresses<br/>+ pause on bounces/complaints]
     L[Replies to agent mailbox] --> M[Resend webhook<br/>Svix-verified]
     M --> N[AI triage]
     N --> O[Tracker: interview / rejected / offer<br/>+ alerts + verification codes]
@@ -325,9 +330,9 @@ Every AI call goes through `server/internal/ai`, which resolves the user's own e
 1. **AI key** — in Settings → AI provider, add an Anthropic key (recommended; enables Claude web search) or an OpenRouter key. Pick smart/fast models or keep the defaults.
 2. **Resume** — upload one; the agent seeds your search preferences and application profile from it.
 3. **Preferences** — in Autopilot → Settings, set target titles, keywords, locations/remote, seniority, salary floor, exclusions, sources and your company watchlist, plus the answers forms always ask (work authorization, sponsorship, notice period, links, voluntary self-identification).
-4. **Agent mailbox** (self-hosters) — set `AGENT_MAIL_DOMAIN` to a subdomain, add it to Resend for receiving (MX) and sending (SPF/DKIM), and point a Resend `email.received` webhook at `https://<api>/api/v1/webhooks/resend` with its secret in `RESEND_WEBHOOK_SECRET`. Use a subdomain: Resend receives all mail for the domain.
-5. **Extension** — install it, connect once from Settings → Extension, and turn on its autopilot. It works the queue while Chrome is open.
-6. **Turn on Autopilot** — the first run starts right away; after that it runs on your schedule. Review the queue whenever it emails you.
+4. **Agent mailbox** (self-hosters) — set `AGENT_MAIL_DOMAIN` to a subdomain, add it to Resend for receiving (MX) and sending (DKIM + the `send.` SPF/MX records), publish a DMARC record (`v=DMARC1; p=none;` at least), and point a Resend webhook at `https://<api>/api/v1/webhooks/resend` with its secret in `RESEND_WEBHOOK_SECRET`. Then run `go run ./cmd/mailcheck -fix` in `server/` to turn tracking off and subscribe the webhook to delivery events. Use a subdomain: Resend receives all mail for the domain.
+5. **Sending hours** — in Autopilot → Settings → Apply rules, check the timezone, sending hours, weekdays-only and the wait before sending. New mailboxes start at 5 emails a day and ramp up.
+6. **Turn on Autopilot** — the first run starts right away; after that it runs on your schedule. Review the queue whenever it emails you; cancel any scheduled email before it goes out.
 
 ---
 
