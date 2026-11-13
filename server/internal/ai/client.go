@@ -110,7 +110,6 @@ const (
 	StageKeyValidation    = "key_validation"
 	StageLeadScoring      = "lead_scoring"
 	StageJobSearch        = "job_search"
-	StageCoverLetter      = "cover_letter"
 	StageApplicationEmail = "application_email"
 	StageApplicationFill  = "application_fill"
 	StageEmailTriage      = "email_triage"
