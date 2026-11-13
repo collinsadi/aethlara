@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/collinsadi/aethlara/internal/ai"
-	"github.com/collinsadi/aethlara/internal/email"
-	"github.com/collinsadi/aethlara/internal/job"
 	"github.com/collinsadi/aethlara/internal/logger"
 	"github.com/collinsadi/aethlara/internal/prompts"
 	"github.com/collinsadi/aethlara/pkg/sanitise"
@@ -20,9 +18,10 @@ import (
 
 // Cold email fallback: when the agent cannot read a posting (it closed, the
 // link was a careers index, web search reported a role that is not listed),
-// it emails an address the company publishes, with the original resume.
-// Applications to the same address in one run share a single email, and an
-// address is emailed at most once per cooldown.
+// it emails an address the company publishes (or one the user gave), with
+// the original resume. Applications to the same address in one run share a
+// single email, and an address is emailed at most once per cooldown. Like
+// every application email, it waits in the send queue (outbox.go).
 
 const coldEmailCooldown = 14 * 24 * time.Hour
 
@@ -48,10 +47,10 @@ type coldEmailResult struct {
 	Reason        string   `json:"reason"`
 }
 
-// sendColdEmails sends one email per address for the fallbacks collected
-// during a run. Returns ai.ErrNoAPIKey (after re-queueing what is left)
-// when the user's AI key stops working.
-func (s *Service) sendColdEmails(ctx context.Context, run *Run, p *Profile, user *UserBasics, resume *ResumeInfo, jobs []coldEmailJob, stats *RunStats) error {
+// scheduleColdEmails queues one email per address for the fallbacks
+// collected during a run. Returns ai.ErrNoAPIKey (after re-queueing what
+// is left) when the user's AI key stops working.
+func (s *Service) scheduleColdEmails(ctx context.Context, run *Run, p *Profile, user *UserBasics, resume *ResumeInfo, jobs []coldEmailJob, plan *sendPlan, stats *RunStats) error {
 	groups := map[string][]coldEmailJob{}
 	var order []string
 	for _, j := range jobs {
@@ -66,7 +65,7 @@ func (s *Service) sendColdEmails(ctx context.Context, run *Run, p *Profile, user
 	for i, addr := range order {
 		err := ctx.Err()
 		if err == nil {
-			err = s.sendColdEmail(ctx, run, p, ident, doc, resume, groups[addr], stats)
+			err = s.scheduleColdEmail(ctx, run, p, ident, doc, resume, groups[addr], plan, stats)
 		}
 		if err != nil {
 			// Out of time or no usable key: hand the rest back to the queue.
@@ -83,10 +82,10 @@ func (s *Service) sendColdEmails(ctx context.Context, run *Run, p *Profile, user
 	return nil
 }
 
-func (s *Service) sendColdEmail(ctx context.Context, run *Run, p *Profile, ident identity, doc *resumeDoc, resume *ResumeInfo, group []coldEmailJob, stats *RunStats) error {
+func (s *Service) scheduleColdEmail(ctx context.Context, run *Run, p *Profile, ident identity, doc *resumeDoc, resume *ResumeInfo, group []coldEmailJob, plan *sendPlan, stats *RunStats) error {
 	log := logger.FromContext(ctx).With("component", "agent", "operation", "cold_email")
 	first := group[0]
-	addr := first.contact.Email
+	addr := strings.ToLower(first.contact.Email)
 	failAll := func(msg string) error {
 		for _, j := range group {
 			s.failApplication(ctx, run, p.UserID, j.app, j.lead, msg, stats)
@@ -105,48 +104,13 @@ func (s *Service) sendColdEmail(ctx context.Context, run *Run, p *Profile, ident
 	if err != nil {
 		return err // ai.ErrNoAPIKey
 	}
-	data, filename, contentType, err := s.resumeFile(ctx, p.UserID, &Application{UseOriginalResume: true}, resume, ident)
-	if err != nil {
-		return failAll("the posting could not be read and your resume file could not be loaded from storage")
-	}
-
-	name := strings.TrimSpace(headerUnsafe.ReplaceAllString(ident.FullName, " "))
-	mailbox := *p.MailboxAddress
-	signature := []string{name}
-	for _, v := range []string{ident.Email, ident.Phone, ident.LinkedIn, ident.GitHub, ident.Portfolio} {
-		if v != "" {
-			signature = append(signature, v)
-		}
-	}
-	text := body + "\n\n--\n" + strings.Join(signature, "\n")
-
-	providerID, err := s.agentMail.SendMessage(ctx, email.OutboundEmail{
-		From:        fmt.Sprintf("%s <%s>", name, mailbox),
-		To:          []string{addr},
-		ReplyTo:     []string{mailbox},
-		Subject:     subject,
-		Text:        text,
-		HTML:        textToHTML(text),
-		Attachments: []email.Attachment{{Filename: filename, ContentType: contentType, Content: data}},
-	})
-	if err != nil {
-		log.Warn("cold email send failed", "error", logger.TruncateError(err, 200))
-		return failAll("the posting could not be read and the email to " + addr + " could not be sent")
-	}
 
 	roles := make([]string, 0, len(group))
 	for _, j := range group {
 		roles = append(roles, j.lead.Title)
 	}
-	now := time.Now()
+	apps := make([]*Application, 0, len(group))
 	for _, j := range group {
-		if rec, err := s.jobs.RecordLeadApplication(ctx, p.UserID, job.LeadRecordInput{
-			ResumeID: resume.ID, JobURL: j.lead.URL, Title: j.lead.Title, Company: j.lead.Company,
-			Note: "The posting could not be read, so the agent emailed " + addr + " directly.",
-		}); err == nil {
-			j.app.JobID = &rec.ID
-			_ = s.repo.SetLeadJob(ctx, j.lead.ID, rec.ID)
-		}
 		result, _ := json.Marshal(coldEmailResult{
 			Kind: "cold_email", To: addr, ContactKind: j.contact.Kind, ContactSource: j.contact.Source,
 			Subject: subject, Roles: roles, Reason: j.reason,
@@ -156,29 +120,27 @@ func (s *Service) sendColdEmail(ctx context.Context, run *Run, p *Profile, ident
 		j.app.UseOriginalResume = true
 		j.app.CoverLetter = &body
 		j.app.Result = result
-		j.app.Status = AppSubmitted
-		j.app.SubmittedAt = &now
-		j.app.LastError = nil
-		j.app.Needs = nil
-		if err := s.repo.SaveApplication(ctx, j.app); err != nil {
-			log.Error("cold email recorded send but save failed", "application_id", j.app.ID, "error", logger.TruncateError(err, 200))
-			continue
-		}
-		s.markSubmitted(ctx, p.UserID, j.lead, j.app)
-		stats.Prepared++
-		stats.EmailsSent++
-		s.event(ctx, Event{UserID: p.UserID, RunID: &run.ID, Kind: EventEmailSent, Level: "success",
-			LeadID: &j.lead.ID, ApplicationID: &j.app.ID,
-			Message: fmt.Sprintf("Couldn't apply to %s at %s through a posting, so emailed %s directly (published on %s)",
-				j.lead.Title, j.lead.Company, addr, hostOf(j.contact.Source))})
+		j.app.RecipientKind = strPtr(j.contact.Kind)
+		j.app.RecipientSource = strPtr(j.contact.Source)
+		apps = append(apps, j.app)
 	}
-	_, _ = s.repo.InsertMessage(ctx, Message{
-		UserID: p.UserID, Direction: "outbound", ProviderID: strPtr(providerID),
-		FromAddress: mailbox, ToAddresses: []string{addr}, Subject: subject, TextBody: text,
-		Category: strPtr("application"), ApplicationID: &first.app.ID, JobID: first.app.JobID,
-		TriageStatus: "skipped", ReceivedAt: now,
-	})
-	log.Info("cold email sent", "roles", len(group), "contact_kind", first.contact.Kind)
+	at, err := s.scheduleEmail(ctx, p, plan, resume, apps, OutboxColdEmail, addr, subject, body)
+	if err != nil {
+		log.Error("cold email could not be queued", "error", err)
+		return failAll("the posting could not be read and the email to " + addr + " could not be queued")
+	}
+	for _, j := range group {
+		stats.Prepared++
+		stats.EmailsScheduled++
+		where := "the address you gave"
+		if j.contact.Kind != RecipientUser {
+			where = "published on " + hostOf(j.contact.Source)
+		}
+		s.scheduledEvent(ctx, run, p, j.app, j.lead, at,
+			fmt.Sprintf("Couldn't apply to %s at %s through a posting, so the agent will email %s directly (%s)",
+				j.lead.Title, j.lead.Company, addr, where))
+	}
+	log.Info("cold email scheduled", "roles", len(group), "contact_kind", first.contact.Kind)
 	return nil
 }
 
@@ -272,7 +234,7 @@ func knownAboutRole(l *Lead) string {
 
 func recipientKind(c *contactInfo) string {
 	switch c.Kind {
-	case "hiring":
+	case RecipientHiring, RecipientUser:
 		return "careers or recruiting inbox"
 	case "person":
 		return "a person at the company"

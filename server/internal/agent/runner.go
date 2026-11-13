@@ -19,14 +19,29 @@ import (
 
 const staleLeadAge = 21 * 24 * time.Hour
 
-// Start launches the scheduler and inbox triage workers. They stop when ctx
-// is cancelled; call Wait to block until they have.
+// Start launches the scheduler, inbox triage, send queue and mail health
+// workers. They stop when ctx is cancelled; call Wait to block until they
+// have.
 func (s *Service) Start(ctx context.Context) {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 		s.triageLoop(ctx)
 	}()
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.healthLoop(ctx)
+	}()
+	if s.cfg.AgentMailSenderEnabled {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.outboxLoop(ctx)
+		}()
+	} else {
+		slog.Warn("agent: send queue disabled (AGENT_MAIL_SENDER_ENABLED=false); scheduled emails stay queued")
+	}
 	if !s.cfg.AgentSchedulerEnabled {
 		slog.Warn("agent: scheduler disabled (AGENT_SCHEDULER_ENABLED=false); runs only start manually")
 		return
@@ -141,8 +156,10 @@ func (s *Service) StartManualRun(ctx context.Context, userID string) (*Run, erro
 	return run, nil
 }
 
-// execute performs one run: apply what was approved, discover new leads,
-// apply anything auto-approved, expire stale leads, then send the digest.
+// execute performs one run: prepare and schedule what was approved,
+// discover new leads, prepare anything auto-approved, expire stale leads,
+// then send the digest. The emails themselves go out later from the send
+// queue.
 func (s *Service) execute(parent context.Context, run *Run) {
 	ctx, cancel := context.WithTimeout(context.WithValue(parent, logger.UserIDKey, run.UserID), s.runTimeout())
 	defer cancel()
@@ -185,7 +202,7 @@ func (s *Service) execute(parent context.Context, run *Run) {
 	}
 	s.event(ctx, Event{UserID: run.UserID, RunID: &run.ID, Kind: EventRunStarted, Message: "Autopilot run started"})
 
-	// 1. Apply to everything approved since the last run.
+	// 1. Prepare everything approved since the last run.
 	if err := s.applyQueued(ctx, run, p, resume, &stats); err != nil {
 		if errors.Is(err, ai.ErrNoAPIKey) {
 			fail("Your AI key stopped working. Update it in Settings.", err)
@@ -217,7 +234,7 @@ func (s *Service) execute(parent context.Context, run *Run) {
 	s.event(ctx, Event{UserID: run.UserID, RunID: &run.ID, Kind: EventRunFinished, Level: "success", Message: summary})
 	finish("completed", nil)
 	log.Info("run completed", "latency_ms", time.Since(start).Milliseconds(),
-		"new_leads", stats.NewLeads, "prepared", stats.Prepared, "emails_sent", stats.EmailsSent)
+		"new_leads", stats.NewLeads, "prepared", stats.Prepared, "emails_scheduled", stats.EmailsScheduled)
 
 	if p.ApplySettings.DigestEmails {
 		s.sendDigest(context.WithoutCancel(ctx), p, run, stats)
@@ -228,6 +245,9 @@ func runSummary(st RunStats) string {
 	var parts []string
 	if st.NewLeads > 0 {
 		parts = append(parts, fmt.Sprintf("%d new job%s to review", st.NewLeads, plural(st.NewLeads)))
+	}
+	if st.EmailsScheduled > 0 {
+		parts = append(parts, fmt.Sprintf("%d application%s scheduled to send", st.EmailsScheduled, plural(st.EmailsScheduled)))
 	}
 	if st.EmailsSent > 0 {
 		parts = append(parts, fmt.Sprintf("%d application%s emailed", st.EmailsSent, plural(st.EmailsSent)))
@@ -251,7 +271,7 @@ const digestCooldown = 12 * time.Hour
 // per digestCooldown.
 func (s *Service) sendDigest(ctx context.Context, p *Profile, run *Run, st RunStats) {
 	needs, _ := s.repo.ApplicationsByStatus(ctx, p.UserID, AppNeedsInput, 10)
-	if st.NewLeads == 0 && st.EmailsSent == 0 && st.ReadyForBrowser == 0 && len(needs) == 0 {
+	if st.NewLeads == 0 && st.EmailsScheduled == 0 && st.EmailsSent == 0 && st.ReadyForBrowser == 0 && len(needs) == 0 {
 		return
 	}
 	if last, err := s.repo.LastEventOfKind(ctx, p.UserID, EventDigestSent); err == nil && last != nil &&
@@ -268,6 +288,13 @@ func (s *Service) sendDigest(ctx context.Context, p *Profile, run *Run, st RunSt
 	dash := html.EscapeString(strings.TrimRight(s.cfg.DashboardURL, "/"))
 	var b strings.Builder
 	b.WriteString(`<p style="font-size:15px;color:#111">` + html.EscapeString(runSummary(st)) + `.</p>`)
+	if st.EmailsScheduled > 0 {
+		if _, next, _, err := s.repo.SendingSummary(ctx, p.UserID); err == nil && next != nil {
+			w := windowFor(p.ApplySettings)
+			fmt.Fprintf(&b, `<p style="font-size:14px;color:#3f3f46">Emails go out one at a time, spaced through your sending window. The next one is due %s (%s). Cancel any of them from Applications before then.</p>`,
+				html.EscapeString(next.In(w.loc).Format("Mon 2 Jan, 15:04")), html.EscapeString(w.loc.String()))
+		}
+	}
 	if len(top) > 0 {
 		b.WriteString(`<h3 style="font-size:15px;margin:20px 0 8px">Top new matches</h3><table style="width:100%;border-collapse:collapse">`)
 		for _, l := range top {

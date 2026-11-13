@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -39,6 +40,11 @@ type Service struct {
 	runSem   chan struct{}
 	triageCh chan struct{}
 	wg       sync.WaitGroup
+
+	// health is the latest deliverability report for the agent domain.
+	health atomic.Pointer[email.HealthReport]
+	// blockedLogAt rate-limits the "sending held" log (send loop only).
+	blockedLogAt time.Time
 }
 
 func NewService(repo *Repository, jobs job.Service, aiClient *ai.Client, mail, agentMail *email.Client, r2 *storage.R2Client, cfg *config.Config) *Service {
@@ -76,6 +82,10 @@ func defaultApplySettings() ApplySettings {
 		DigestEmails:      true,
 		ImportantAlerts:   true,
 		ColdEmailFallback: true,
+		SendDelayMinutes:  defaultSendDelayMinutes,
+		SendWindowStart:   defaultSendWindowStart,
+		SendWindowEnd:     defaultSendWindowEnd,
+		SendWeekdaysOnly:  true,
 	}
 }
 
@@ -226,7 +236,13 @@ type ProfileUpdate struct {
 	// setting cannot reset it.
 	ApplySettingsPatch json.RawMessage
 	RunIntervalHours   *int
+	// SendingPaused true holds every scheduled email until it is set back
+	// to false (which also lifts a pause the circuit breaker set).
+	SendingPaused *bool
 }
+
+// userPauseReason marks a pause the user set (it has no end date).
+const userPauseReason = "Paused by you. Scheduled emails wait until you resume sending."
 
 var mailboxLocalRe = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._-]{0,38}[a-z0-9])?$`)
 
@@ -285,6 +301,9 @@ func (s *Service) UpdateProfile(ctx context.Context, userID string, u ProfileUpd
 		if as.AutoApproveScore != nil && (*as.AutoApproveScore < 50 || *as.AutoApproveScore > 100) {
 			return nil, fmt.Errorf("%w: auto_approve_score must be between 50 and 100", ErrInvalidInput)
 		}
+		if err := validateSending(&as); err != nil {
+			return nil, err
+		}
 		p.ApplySettings = as
 	}
 	if u.RunIntervalHours != nil {
@@ -323,7 +342,44 @@ func (s *Service) UpdateProfile(ctx context.Context, userID string, u ProfileUpd
 		slog.Error("agent: update profile failed", "user_id", userID, "error", err)
 		return nil, ErrInternal
 	}
+	if u.SendingPaused != nil {
+		var until *time.Time
+		var reason *string
+		if *u.SendingPaused {
+			forever := time.Now().AddDate(100, 0, 0)
+			until, reason = &forever, strPtr(userPauseReason)
+		}
+		if err := s.repo.SetSendingPause(ctx, userID, until, reason); err != nil {
+			return nil, ErrInternal
+		}
+		updated.SendingPausedUntil, updated.SendingPauseReason = until, reason
+	}
 	return updated, nil
+}
+
+// validateSending checks the sending settings of an apply settings patch.
+func validateSending(as *ApplySettings) error {
+	if as.SendDelayMinutes < minSendDelayMinutes || as.SendDelayMinutes > maxSendDelayMinutes {
+		return fmt.Errorf("%w: send_delay_minutes must be between %d and %d", ErrInvalidInput, minSendDelayMinutes, maxSendDelayMinutes)
+	}
+	if as.SendWindowStart < 0 || as.SendWindowStart > 23 || as.SendWindowEnd < 1 || as.SendWindowEnd > 24 {
+		return fmt.Errorf("%w: send_window_start must be 0-23 and send_window_end 1-24", ErrInvalidInput)
+	}
+	if as.SendWindowEnd-as.SendWindowStart < minSendWindowHours {
+		return fmt.Errorf("%w: the sending window must be at least %d hours long", ErrInvalidInput, minSendWindowHours)
+	}
+	as.SendTimezone = strings.TrimSpace(as.SendTimezone)
+	if as.SendTimezone != "" {
+		if len(as.SendTimezone) > 64 {
+			return fmt.Errorf("%w: send_timezone is too long", ErrInvalidInput)
+		}
+		loc, err := time.LoadLocation(as.SendTimezone)
+		if err != nil || strings.EqualFold(as.SendTimezone, "local") {
+			return fmt.Errorf("%w: send_timezone must be an IANA timezone such as Europe/London", ErrInvalidInput)
+		}
+		as.SendTimezone = loc.String()
+	}
+	return nil
 }
 
 func cleanList(in []string, maxItems, maxLen int) []string {
@@ -506,6 +562,20 @@ type Overview struct {
 	RunningRun      *Run
 	LastRun         *Run
 	RecentEvents    []Event
+	Sending         Sending
+	MailHealth      *email.HealthReport
+}
+
+// Sending summarises the user's send queue.
+type Sending struct {
+	PausedUntil *time.Time
+	PauseReason *string
+	Scheduled   int
+	NextSendAt  *time.Time
+	SentLast24h int
+	DailyCap    int
+	WarmingUp   bool
+	Timezone    string
 }
 
 func (s *Service) Overview(ctx context.Context, userID string) (*Overview, error) {
@@ -544,6 +614,15 @@ func (s *Service) Overview(ctx context.Context, userID string) (*Overview, error
 		}
 	}
 	o.RecentEvents, _ = s.repo.ListEvents(ctx, userID, 0, 12)
+
+	now := time.Now()
+	if p.SendingPaused(now) {
+		o.Sending.PausedUntil, o.Sending.PauseReason = p.SendingPausedUntil, p.SendingPauseReason
+	}
+	o.Sending.Scheduled, o.Sending.NextSendAt, o.Sending.SentLast24h, _ = s.repo.SendingSummary(ctx, userID)
+	o.Sending.DailyCap, o.Sending.WarmingUp = s.dailySendCap(ctx, p, now)
+	o.Sending.Timezone = windowFor(p.ApplySettings).loc.String()
+	o.MailHealth = s.MailHealth()
 	return o, nil
 }
 

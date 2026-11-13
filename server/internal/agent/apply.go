@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -70,6 +69,11 @@ func (s *Service) DecideLead(ctx context.Context, userID, leadID, decision strin
 			return nil, nil, fmt.Errorf("%w: this application is already being submitted", ErrInvalidInput)
 		}
 		if app != nil && app.Status != AppCancelled {
+			if app.Status == AppScheduled {
+				if err := s.unschedule(ctx, userID, app); err != nil {
+					return nil, nil, err
+				}
+			}
 			app.Status = AppCancelled
 			app.ClaimExpiresAt = nil
 			if err := s.repo.SaveApplication(ctx, app); err != nil {
@@ -86,14 +90,25 @@ func (s *Service) DecideLead(ctx context.Context, userID, leadID, decision strin
 	case "reset":
 		switch lead.Status {
 		case LeadDismissed, LeadExpired:
-		case LeadApproved:
-			// Undo an approval while its application is still only queued.
+		case LeadApproved, LeadApplying:
+			// Undo an approval while its application is only queued, or its
+			// email is still waiting in the send queue.
 			app, err := s.repo.GetApplicationByLead(ctx, userID, leadID)
 			if err != nil {
 				return nil, nil, ErrInternal
 			}
 			if app != nil {
-				if app.Status != AppQueued && app.Status != AppCancelled {
+				switch app.Status {
+				case AppQueued, AppCancelled:
+				case AppScheduled:
+					if err := s.unschedule(ctx, userID, app); err != nil {
+						return nil, nil, err
+					}
+					app.Status = AppCancelled
+					if err := s.repo.SaveApplication(ctx, app); err != nil {
+						return nil, nil, ErrInternal
+					}
+				default:
 					return nil, nil, fmt.Errorf("%w: the agent already started this application", ErrInvalidInput)
 				}
 				if err := s.repo.DeleteApplication(ctx, userID, app.ID); err != nil {
@@ -119,16 +134,20 @@ func idPtr(a *Application) *string {
 	return &a.ID
 }
 
-// ── Prepare + submit (run stage) ──────────────────────────────────────────────
+// ── Prepare + schedule (run stage) ────────────────────────────────────────────
 
-// applyQueued prepares approved applications: tailor the resume, write the
-// cover letter, then either email the application or hand it to the
-// extension. Respects the daily limit.
+// applyQueued prepares approved applications: tailor the resume, find the
+// address to send to, write the email, then schedule it in the send queue
+// (outbox.go sends it later, paced by schedule.go). Prepares no more than
+// the mailbox's daily cap, counting what was sent in the last 24 hours and
+// what is already scheduled.
 func (s *Service) applyQueued(ctx context.Context, run *Run, p *Profile, resume *ResumeInfo, stats *RunStats) error {
 	if n, err := s.repo.RequeueInterrupted(ctx, p.UserID); err == nil && n > 0 {
 		slog.Info("agent: re-queued interrupted applications", "count", n)
 	}
-	used, err := s.repo.CountSubmittedSince(ctx, p.UserID, time.Now().Add(-24*time.Hour))
+	now := time.Now()
+	limit, _ := s.dailySendCap(ctx, p, now)
+	used, err := s.repo.CountSubmittedSince(ctx, p.UserID, now.Add(-24*time.Hour))
 	if err != nil {
 		return err
 	}
@@ -136,28 +155,33 @@ func (s *Service) applyQueued(ctx context.Context, run *Run, p *Profile, resume 
 	if err != nil {
 		return err
 	}
-	used += counts[AppReady] + counts[AppInProgress]
-	budget := p.ApplySettings.DailyLimit - used
+	used += counts[AppScheduled] + counts[AppReady] + counts[AppInProgress]
+	budget := limit - used
 	if budget <= 0 {
 		return nil
 	}
 
 	queued, err := s.repo.ApplicationsByStatus(ctx, p.UserID, AppQueued, budget)
-	if err != nil {
+	if err != nil || len(queued) == 0 {
 		return err
 	}
 	user, err := s.repo.GetUserBasics(ctx, p.UserID)
 	if err != nil || user == nil {
 		return fmt.Errorf("load user: %w", err)
 	}
+	plan, err := s.loadSendPlan(ctx, p, now)
+	if err != nil {
+		return fmt.Errorf("load send plan: %w", err)
+	}
 	// Applications whose posting cannot be read fall back to cold emails,
-	// sent after the loop so several roles at one company share one email.
+	// scheduled after the loop so several roles at one company share one
+	// email.
 	var cold []coldEmailJob
 	for i := range queued {
 		if ctx.Err() != nil {
 			break
 		}
-		if err := s.prepareOne(ctx, run, p, user, resume, &queued[i], stats, &cold); errors.Is(err, ai.ErrNoAPIKey) {
+		if err := s.prepareOne(ctx, run, p, user, resume, &queued[i], plan, stats, &cold); errors.Is(err, ai.ErrNoAPIKey) {
 			for _, j := range cold {
 				j.app.Status = AppQueued
 				_ = s.repo.SaveApplication(ctx, j.app)
@@ -167,7 +191,7 @@ func (s *Service) applyQueued(ctx context.Context, run *Run, p *Profile, resume 
 		}
 	}
 	if len(cold) > 0 {
-		if err := s.sendColdEmails(ctx, run, p, user, resume, cold, stats); err != nil {
+		if err := s.scheduleColdEmails(ctx, run, p, user, resume, cold, plan, stats); err != nil {
 			return err
 		}
 	}
@@ -193,7 +217,7 @@ func transientPrepareError(err error) bool {
 	return errors.Is(err, job.ErrExtraction) && !errors.As(err, &ext)
 }
 
-func (s *Service) prepareOne(ctx context.Context, run *Run, p *Profile, user *UserBasics, resume *ResumeInfo, app *Application, stats *RunStats, cold *[]coldEmailJob) error {
+func (s *Service) prepareOne(ctx context.Context, run *Run, p *Profile, user *UserBasics, resume *ResumeInfo, app *Application, plan *sendPlan, stats *RunStats, cold *[]coldEmailJob) error {
 	log := logger.FromContext(ctx).With("component", "agent", "operation", "prepare", "application_id", app.ID)
 	lead, err := s.repo.GetLead(ctx, p.UserID, app.LeadID)
 	if err != nil || lead == nil {
@@ -224,15 +248,18 @@ func (s *Service) prepareOne(ctx context.Context, run *Run, p *Profile, user *Us
 	}
 	var clues *siteClues
 	// coldEmail hands an application whose posting cannot be read to the
-	// cold email fallback, or fails it when the fallback is off or the
-	// company publishes no usable address.
+	// cold email fallback: an address the user gave, or one the company
+	// publishes. With neither, the user is asked for an address.
 	coldEmail := func(msg string, cause error) error {
 		if !p.ApplySettings.ColdEmailFallback || s.agentMail == nil || p.MailboxAddress == nil || *p.MailboxAddress == "" {
 			return fail(msg, cause)
 		}
-		contact := s.findContact(ctx, p.UserID, lead, clues)
+		contact := userContact(app)
 		if contact == nil {
-			return fail(msg+"; no email address published by "+lead.Company+" was found either", cause)
+			contact = s.findContact(ctx, p.UserID, lead, clues)
+		}
+		if contact == nil {
+			return s.needsRecipient(ctx, run, p.UserID, app, lead, msg+", and "+lead.Company+" publishes no email address the agent could find")
 		}
 		log.Info("posting unreadable, cold email queued", "contact_kind", contact.Kind)
 		*cold = append(*cold, coldEmailJob{app: app, lead: lead, contact: contact, reason: msg})
@@ -314,33 +341,44 @@ func (s *Service) prepareOne(ctx context.Context, run *Run, p *Profile, user *Us
 		tailoredDoc = parseResume(resume.ExtractedJSON)
 	}
 
-	// 3. Cover letter.
+	// 3. Where to send it.
+	rcpt, why := s.resolveRecipient(ctx, p, lead, app, clues)
+	if rcpt == nil {
+		log.Info("no address to send the application to")
+		return s.needsRecipient(ctx, run, p.UserID, app, lead, why)
+	}
+
+	// 4. The email.
 	ident := buildIdentity(p, user, parseResume(resume.ExtractedJSON))
-	if p.ApplySettings.CoverLetters && (app.CoverLetter == nil || *app.CoverLetter == "") {
-		letter, err := s.writeCoverLetter(ctx, p.UserID, ident.FullName, jobText, resumeForApplication(tailoredDoc))
-		if err != nil {
-			if errors.Is(err, ai.ErrNoAPIKey) {
+	subject := applicationSubject(lead, ident.FullName)
+	if app.CoverLetter == nil || *app.CoverLetter == "" {
+		body := ""
+		if p.ApplySettings.CoverLetters {
+			b, err := s.writeApplicationEmail(ctx, p.UserID, ident, lead, rcpt, subject, jobText, resumeForApplication(tailoredDoc))
+			switch {
+			case errors.Is(err, ai.ErrNoAPIKey):
 				app.Status = AppQueued
 				_ = s.repo.SaveApplication(ctx, app)
 				return err
+			case err != nil:
+				log.Warn("application email draft failed, using the template", "error", logger.TruncateError(err, 200))
+			default:
+				body = b
 			}
-			log.Warn("cover letter failed", "error", logger.TruncateError(err, 200))
-		} else {
-			app.CoverLetter = &letter
 		}
+		if body == "" {
+			body = applicationEmailTemplate(ident, parseResume(resume.ExtractedJSON), lead, rcpt.Kind)
+		}
+		app.CoverLetter = &body
 	}
 
-	// 4. Channel.
 	applyURL := sources.NormalizeApplyURL(firstNonEmpty(deref(lead.ApplyURL), lead.URL))
 	app.ApplyURL = &applyURL
-	ats := firstNonEmpty(deref(lead.ATS), sources.DetectATS(applyURL))
-	app.ATS = strPtr(ats)
-	if lead.ApplyEmail != nil && *lead.ApplyEmail != "" {
-		app.Channel = ChannelEmail
-		app.ApplyEmail = lead.ApplyEmail
-	} else {
-		app.Channel = ChannelBrowser
-	}
+	app.ATS = strPtr(firstNonEmpty(deref(lead.ATS), sources.DetectATS(applyURL)))
+	app.Channel = ChannelEmail
+	app.ApplyEmail = &rcpt.Email
+	app.RecipientKind = &rcpt.Kind
+	app.RecipientSource = strPtr(rcpt.Source)
 	stats.Prepared++
 
 	// The user may have cancelled while we were working.
@@ -348,39 +386,29 @@ func (s *Service) prepareOne(ctx context.Context, run *Run, p *Profile, user *Us
 		return nil
 	}
 
-	if app.Channel == ChannelEmail {
-		if err := s.sendEmailApplication(ctx, p, ident, lead, app, resume); err != nil {
-			if errors.Is(err, errResumeUnavailable) {
-				return fail("your resume file could not be loaded from storage", err)
-			}
-			return fail("the application email could not be sent", err)
-		}
-		now := time.Now()
-		app.Status = AppSubmitted
-		app.SubmittedAt = &now
-		if err := s.repo.SaveApplication(ctx, app); err != nil {
-			return ErrInternal
-		}
-		s.markSubmitted(ctx, p.UserID, lead, app)
-		stats.EmailsSent++
-		s.event(ctx, Event{UserID: p.UserID, RunID: &run.ID, Kind: EventEmailSent, Level: "success",
-			LeadID: &lead.ID, ApplicationID: &app.ID,
-			Message: fmt.Sprintf("Emailed your application for %s at %s", lead.Title, lead.Company)})
-		return nil
+	// 5. Into the send queue.
+	at, err := s.scheduleEmail(ctx, p, plan, resume, []*Application{app}, OutboxApplication, rcpt.Email, subject, *app.CoverLetter)
+	if err != nil {
+		return err // left "preparing": the next run re-queues it
 	}
-
-	app.Status = AppReady
-	app.LastError = nil
-	app.Needs = nil
-	app.Attempts = 0 // prepare retries must not eat into the extension's claim attempts
-	if err := s.repo.SaveApplication(ctx, app); err != nil {
-		return ErrInternal
-	}
-	stats.ReadyForBrowser++
-	s.event(ctx, Event{UserID: p.UserID, RunID: &run.ID, Kind: EventPrepared, Level: "info",
-		LeadID: &lead.ID, ApplicationID: &app.ID,
-		Message: fmt.Sprintf("%s at %s is ready - the extension will submit it", lead.Title, lead.Company)})
+	stats.EmailsScheduled++
+	s.scheduledEvent(ctx, run, p, app, lead, at,
+		fmt.Sprintf("%s at %s is ready to email to %s%s", lead.Title, lead.Company, rcpt.Email, recipientNote(rcpt)))
 	return nil
+}
+
+// recipientNote says where an address came from, for the activity feed.
+func recipientNote(r *recipient) string {
+	switch r.Kind {
+	case RecipientPosting:
+		return " (the address in the posting)"
+	case RecipientUser:
+		return " (the address you gave)"
+	}
+	if h := hostOf(r.Source); h != "" {
+		return " (published on " + h + ")"
+	}
+	return ""
 }
 
 // markSubmitted moves the lead and tracker job to applied.
@@ -441,8 +469,8 @@ func deref(p *string) string {
 	return *p
 }
 
-// jobBrief renders the job for cover letters and form filling, from the
-// extracted job JSON when available.
+// jobBrief renders the job for application emails and form filling, from
+// the extracted job JSON when available.
 func jobBrief(extractedJSON string, lead *Lead) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Title: %s\nCompany: %s\n", lead.Title, lead.Company)
@@ -482,97 +510,87 @@ func writeList(sb *strings.Builder, label string, items []string) {
 	}
 }
 
-func (s *Service) writeCoverLetter(ctx context.Context, userID, fullName, jobText, resumeText string) (string, error) {
-	resp, err := s.ai.Complete(ctx, ai.Request{
-		UserID:        userID,
-		SystemPrompt:  prompts.CoverLetterSystemPrompt(),
-		UserMessage:   prompts.CoverLetterUserMessage(fullName, jobText, resumeText),
-		PromptVersion: prompts.CoverLetterV1,
-		Stage:         ai.StageCoverLetter,
-	})
-	if err != nil {
-		return "", err
-	}
-	letter := strings.TrimSpace(sanitise.ResumeText(resp.Content))
-	if len(letter) < 200 {
-		return "", fmt.Errorf("cover letter too short")
-	}
-	return clipText(letter, 6000), nil
-}
-
-// ── Email applications ────────────────────────────────────────────────────────
+// ── Application emails ────────────────────────────────────────────────────────
 
 var headerUnsafe = regexp.MustCompile(`[\r\n<>"]+`)
 
 var errResumeUnavailable = errors.New("resume file unavailable")
 
-func (s *Service) sendEmailApplication(ctx context.Context, p *Profile, ident identity, lead *Lead, app *Application, resume *ResumeInfo) error {
-	data, filename, contentType, err := s.resumeFile(ctx, p.UserID, app, resume, ident)
-	if err != nil {
-		return fmt.Errorf("%w: %v", errResumeUnavailable, err)
-	}
-
-	name := strings.TrimSpace(headerUnsafe.ReplaceAllString(ident.FullName, " "))
-	var from string
-	replyTo := ident.Email
-	if p.MailboxAddress != nil && *p.MailboxAddress != "" {
-		from = fmt.Sprintf("%s <%s>", name, *p.MailboxAddress)
-	} else {
-		from = fmt.Sprintf("%s via %s <%s>", name, s.cfg.AppName, s.cfg.EmailFromAddress)
-	}
-	subject := headerUnsafe.ReplaceAllString(fmt.Sprintf("Application for %s - %s", lead.Title, name), " ")
-
-	body := deref(app.CoverLetter)
-	if body == "" {
-		body = fmt.Sprintf("Dear Hiring Team,\n\nPlease find attached my resume for the %s role at %s. "+
-			"I would welcome the chance to discuss how I can contribute.\n\nBest regards,\n%s", lead.Title, lead.Company, name)
-	}
-	signature := []string{name}
-	for _, v := range []string{ident.Email, ident.Phone, ident.LinkedIn, ident.GitHub, ident.Portfolio} {
-		if v != "" {
-			signature = append(signature, v)
-		}
-	}
-	text := body + "\n\n--\n" + strings.Join(signature, "\n")
-
-	providerID, err := s.agentMail.SendMessage(ctx, email.OutboundEmail{
-		From:        from,
-		To:          []string{*app.ApplyEmail},
-		ReplyTo:     []string{replyTo},
-		Subject:     subject,
-		Text:        text,
-		HTML:        textToHTML(text),
-		Attachments: []email.Attachment{{Filename: filename, ContentType: contentType, Content: data}},
-	})
-	if err != nil {
-		return err
-	}
-
-	now := time.Now()
-	_, _ = s.repo.InsertMessage(ctx, Message{
-		UserID: p.UserID, Direction: "outbound", ProviderID: strPtr(providerID),
-		FromAddress: replyTo, ToAddresses: []string{*app.ApplyEmail}, Subject: subject, TextBody: text,
-		Category: strPtr("application"), ApplicationID: &app.ID, JobID: app.JobID,
-		TriageStatus: "skipped", ReceivedAt: now,
-	})
-	return nil
+// applicationSubject is the subject of an application email: plain and
+// specific, the way a person writes it.
+func applicationSubject(lead *Lead, name string) string {
+	subject := fmt.Sprintf("Application for %s - %s", strings.TrimSpace(lead.Title), displayName(name))
+	return clipText(strings.TrimSpace(headerUnsafe.ReplaceAllString(subject, " ")), 150)
 }
 
-func textToHTML(text string) string {
+// writeApplicationEmail drafts the email body with the user's AI. The draft
+// must read like a person's email (applicationEmailOK); otherwise the
+// caller uses the plain template.
+func (s *Service) writeApplicationEmail(ctx context.Context, userID string, ident identity, lead *Lead, rcpt *recipient, subject, jobText, resumeText string) (string, error) {
+	resp, err := s.ai.Complete(ctx, ai.Request{
+		UserID:        userID,
+		SystemPrompt:  prompts.ApplicationEmailSystemPrompt(),
+		UserMessage:   prompts.ApplicationEmailUserMessage(ident.FullName, lead.Company, rcpt.Email, rcpt.Kind, jobText, resumeText),
+		PromptVersion: prompts.ApplicationEmailV1,
+		Stage:         ai.StageApplicationEmail,
+	})
+	if err != nil {
+		return "", err
+	}
+	body := strings.TrimSpace(sanitise.ResumeText(resp.Content))
+	if issues := applicationEmailIssues(subject, body); len(issues) > 0 {
+		return "", fmt.Errorf("draft unusable: %s", strings.Join(issues, ", "))
+	}
+	return body, nil
+}
+
+// applicationEmailIssues lists why a drafted email must not be sent.
+func applicationEmailIssues(subject, body string) []string {
+	var issues []string
+	if n := len(body); n < 350 || n > 2600 {
+		issues = append(issues, fmt.Sprintf("length %d", n))
+	}
+	if placeholderRe.MatchString(body) {
+		issues = append(issues, "placeholder text")
+	}
+	return append(issues, email.Lint(subject, body)...)
+}
+
+// applicationEmailTemplate is the email used when cover letters are off or
+// the AI draft is unusable.
+func applicationEmailTemplate(ident identity, doc *resumeDoc, lead *Lead, recipientKind string) string {
+	name := displayName(ident.FullName)
+	greeting := "Dear Hiring Team,"
+	if recipientKind == RecipientGeneral && strings.TrimSpace(lead.Company) != "" {
+		greeting = "Hi " + strings.TrimSpace(lead.Company) + " team,"
+	}
 	var sb strings.Builder
-	sb.WriteString(`<div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.55;color:#111">`)
-	for _, para := range strings.Split(text, "\n\n") {
-		sb.WriteString("<p>")
-		sb.WriteString(strings.ReplaceAll(html.EscapeString(para), "\n", "<br>"))
-		sb.WriteString("</p>")
+	sb.WriteString(greeting + "\n\n")
+	fmt.Fprintf(&sb, "I would like to apply for the %s role at %s.", strings.TrimSpace(lead.Title), strings.TrimSpace(lead.Company))
+	if summary := firstSentence(doc.summary()); summary != "" {
+		sb.WriteString(" " + summary)
 	}
-	sb.WriteString("</div>")
-	return sb.String()
+	sb.WriteString("\n\nMy resume is attached. I would welcome the chance to talk about how I could contribute to the team.")
+	if recipientKind == RecipientGeneral || recipientKind == RecipientPerson {
+		sb.WriteString(" If you are not the right person for this, I would be grateful if you could pass it on to whoever is hiring for the role.")
+	}
+	sb.WriteString("\n\nBest regards,\n" + name)
+	return sanitise.ResumeText(sb.String())
 }
 
-// resumeFile returns the resume to submit: the tailored PDF when one was
-// produced, otherwise the user's original upload.
+// resumeFile returns the resume to submit for app: the tailored PDF when one
+// was produced, otherwise the user's original upload.
 func (s *Service) resumeFile(ctx context.Context, userID string, app *Application, resume *ResumeInfo, ident identity) ([]byte, string, string, error) {
+	var tailored *string
+	if !app.UseOriginalResume {
+		tailored = app.JobID
+	}
+	return s.attachment(ctx, userID, tailored, resume, ident)
+}
+
+// attachment loads the resume to attach: the tailored PDF of tailoredJobID
+// when there is one, otherwise the original upload.
+func (s *Service) attachment(ctx context.Context, userID string, tailoredJobID *string, resume *ResumeInfo, ident identity) ([]byte, string, string, error) {
 	base := strings.TrimSpace(ident.FirstName + "_" + ident.LastName)
 	base = regexp.MustCompile(`[^A-Za-z0-9_]+`).ReplaceAllString(base, "")
 	if base == "" || base == "_" {
@@ -580,17 +598,17 @@ func (s *Service) resumeFile(ctx context.Context, userID string, app *Applicatio
 	} else {
 		base += "_Resume"
 	}
-	if !app.UseOriginalResume && app.JobID != nil {
-		if data, err := s.jobs.DownloadPDF(ctx, *app.JobID, userID); err == nil {
+	if tailoredJobID != nil {
+		if data, err := s.jobs.DownloadPDF(ctx, *tailoredJobID, userID); err == nil {
 			return data, base + ".pdf", "application/pdf", nil
 		}
 	}
 	if resume == nil {
-		return nil, "", "", fmt.Errorf("no resume on file")
+		return nil, "", "", fmt.Errorf("%w: no resume on file", errResumeUnavailable)
 	}
 	data, contentType, err := s.r2.Download(ctx, resume.R2ObjectKey, maxResumeFileBytes)
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", fmt.Errorf("%w: %v", errResumeUnavailable, err)
 	}
 	ext := map[string]string{"pdf": ".pdf", "docx": ".docx", "doc": ".doc", "md": ".md"}[resume.FileFormat]
 	if contentType == "" {
@@ -990,6 +1008,8 @@ func (s *Service) ReportResult(ctx context.Context, userID, appID string, r Resu
 
 func needsLabel(reason string) string {
 	switch reason {
+	case needsNoEmail:
+		return "an email address to send it to"
 	case "missing_answers":
 		return "a few questions only you can answer"
 	case "captcha":
@@ -1023,7 +1043,7 @@ func QuestionKey(q string) string {
 	return k
 }
 
-// SaveAnswers stores answers for future forms and re-queues the application.
+// SaveAnswers stores answers for later and re-queues the application.
 func (s *Service) SaveAnswers(ctx context.Context, userID, appID string, answers []QA) (*Application, error) {
 	if len(answers) == 0 || len(answers) > 50 {
 		return nil, fmt.Errorf("%w: provide 1-50 answers", ErrInvalidInput)
@@ -1045,11 +1065,14 @@ func (s *Service) SaveAnswers(ctx context.Context, userID, appID string, answers
 		}
 	}
 	if app.Status == AppNeedsInput {
-		app.Status = AppReady
+		// Applying is email-only: prepare it again on the next run.
+		app.Status = AppQueued
 		app.Needs = nil
+		app.OutboxID = nil
 		if err := s.repo.SaveApplication(ctx, app); err != nil {
 			return nil, ErrInternal
 		}
+		_, _ = s.repo.SetLeadStatus(ctx, userID, app.LeadID, LeadApproved, nil, false)
 	}
 	return app, nil
 }
@@ -1068,25 +1091,25 @@ func (s *Service) RetryApplication(ctx context.Context, userID, appID string) (*
 	default:
 		return nil, fmt.Errorf("%w: only failed, waiting or cancelled applications can be retried", ErrInvalidInput)
 	}
-	if app.JobID != nil && app.Channel == ChannelBrowser {
-		app.Status = AppReady
-	} else {
-		app.Status = AppQueued
-	}
+	// Every application is an email now: re-prepare it (the tailored resume
+	// and email are reused) and schedule it again.
+	app.Status = AppQueued
 	app.LastError = nil
 	app.Needs = nil
 	app.ClaimExpiresAt = nil
+	app.OutboxID = nil
 	// A manual retry starts a fresh budget for prepare retries and
 	// extension claims alike.
 	app.Attempts = 0
 	if err := s.repo.SaveApplication(ctx, app); err != nil {
 		return nil, ErrInternal
 	}
-	_, _ = s.repo.SetLeadStatus(ctx, userID, app.LeadID, LeadApplying, nil, false)
+	_, _ = s.repo.SetLeadStatus(ctx, userID, app.LeadID, LeadApproved, nil, false)
 	return app, nil
 }
 
-// CancelApplication stops an application that has not been submitted.
+// CancelApplication stops an application that has not been submitted,
+// taking its email out of the send queue.
 func (s *Service) CancelApplication(ctx context.Context, userID, appID string) (*Application, error) {
 	app, err := s.repo.GetApplication(ctx, userID, appID)
 	if err != nil {
@@ -1097,6 +1120,11 @@ func (s *Service) CancelApplication(ctx context.Context, userID, appID string) (
 	}
 	if app.Status == AppSubmitted {
 		return nil, fmt.Errorf("%w: this application was already submitted", ErrInvalidInput)
+	}
+	if app.Status == AppScheduled {
+		if err := s.unschedule(ctx, userID, app); err != nil {
+			return nil, err
+		}
 	}
 	app.Status = AppCancelled
 	app.ClaimExpiresAt = nil
