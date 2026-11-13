@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { CheckCircle2, ListChecks, Mail, Puzzle, UserRoundCheck, type LucideIcon } from 'lucide-react'
+import { CheckCircle2, Clock, ListChecks, Mail, UserRoundCheck, type LucideIcon } from 'lucide-react'
 import type { AgentOverview } from '@/lib/agentTypes'
 import { toneText, type Tone } from '@/lib/tones'
 import { cn } from '@/lib/utils'
@@ -15,9 +15,9 @@ interface Tile {
 }
 
 export function CountTiles({ overview }: { overview: AgentOverview }) {
-  const { counts, setup } = overview
+  const { counts, sending } = overview
   const waiting = (counts.applications.needs_input ?? 0) + (counts.applications.failed ?? 0)
-  const ready = counts.applications.ready ?? 0
+  const scheduled = counts.applications.scheduled ?? 0
 
   const tiles: Tile[] = [
     {
@@ -31,23 +31,23 @@ export function CountTiles({ overview }: { overview: AgentOverview }) {
     {
       label: 'Waiting on you',
       value: waiting,
-      hint: 'Questions to answer or failures to retry',
+      hint: 'Addresses to add or failures to retry',
       icon: UserRoundCheck,
       to: '/applications',
       tone: 'warning',
     },
     {
-      label: 'Ready for extension',
-      value: ready,
-      hint: setup.extension_connected ? 'The extension will submit these' : 'Connect the extension to submit',
-      icon: Puzzle,
+      label: 'Scheduled to send',
+      value: scheduled,
+      hint: sending?.paused ? 'Sending is paused' : 'Emailed one at a time in your sending window',
+      icon: Clock,
       to: '/applications',
-      tone: setup.extension_connected ? 'neutral' : 'warning',
+      tone: sending?.paused ? 'warning' : 'neutral',
     },
     {
-      label: 'Submitted today',
+      label: 'Sent today',
       value: counts.submitted_today,
-      hint: 'In the last 24 hours',
+      hint: 'Applications emailed in the last 24 hours',
       icon: CheckCircle2,
       to: '/applications',
       tone: 'success',

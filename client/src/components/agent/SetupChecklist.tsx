@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { CheckCircle2, ChevronDown, Circle, MinusCircle, AlertCircle } from 'lucide-react'
-import type { AgentProfile, AgentSetup } from '@/lib/agentTypes'
+import type { AgentProfile, AgentSetup, MailHealthReport } from '@/lib/agentTypes'
 import { ui } from '@/lib/styles'
 import { cn } from '@/lib/utils'
 
@@ -15,6 +15,44 @@ interface Step {
   required: boolean
   detail: React.ReactNode
   actions?: { label: string; to: string; primary?: boolean }[]
+}
+
+/** Deliverability of the agent's sending domain, from the server's periodic check. */
+function deliverabilityStep(health: MailHealthReport | null, mailboxEnabled: boolean): Step {
+  const base = { id: 'deliverability', title: 'Email deliverability', required: false }
+  if (!mailboxEnabled || !health) {
+    return {
+      ...base,
+      state: 'optional',
+      detail: mailboxEnabled
+        ? 'The server checks the sending domain (SPF, DKIM, DMARC, replies, tracking, bounce reporting) shortly after it starts.'
+        : 'Without an agent mailbox, applications are sent from the platform address.',
+    }
+  }
+  const failing = health.checks.filter((c) => c.status !== 'ok')
+  const passing = health.checks.filter((c) => c.status === 'ok').map((c) => c.label)
+  const state: StepState = !health.can_send || health.status === 'fail' ? 'todo' : failing.length ? 'partial' : 'done'
+  return {
+    ...base,
+    state,
+    detail:
+      failing.length === 0 ? (
+        <>
+          {health.domain} passes every check: {passing.join(', ')}. Applications reach the inbox, not spam.
+        </>
+      ) : (
+        <>
+          {health.can_send ? `${health.domain} sends, but:` : `Sending is on hold for ${health.domain}:`}
+          <ul className="mt-1 list-disc space-y-0.5 pl-4">
+            {failing.map((c) => (
+              <li key={c.id}>
+                <span className="font-medium text-foreground">{c.label}</span> — {c.detail}
+              </li>
+            ))}
+          </ul>
+        </>
+      ),
+  }
 }
 
 function buildSteps(setup: AgentSetup, profile: AgentProfile): Step[] {
@@ -68,7 +106,7 @@ function buildSteps(setup: AgentSetup, profile: AgentProfile): Step[] {
       detail: setup.mailbox_enabled ? (
         setup.inbound_enabled ? (
           <>
-            Applications go out from <span className="font-medium text-foreground">{profile.mailbox_address}</span>
+            Every application is emailed from <span className="font-medium text-foreground">{profile.mailbox_address}</span>
             , and replies land in your Inbox.
           </>
         ) : (
@@ -82,21 +120,7 @@ function buildSteps(setup: AgentSetup, profile: AgentProfile): Step[] {
       ),
       actions: setup.mailbox_enabled ? [{ label: 'Edit address', to: '/agent/settings#mailbox' }] : undefined,
     },
-    {
-      id: 'extension',
-      title: 'Connect the Chrome extension',
-      required: false,
-      state: setup.extension_connected ? 'done' : 'todo',
-      detail: setup.extension_connected
-        ? 'Form applications (Greenhouse, Lever, Ashby…) are filled and submitted from your browser.'
-        : 'Needed for form applications on Greenhouse, Lever, Ashby and other job sites. Email applications work without it.',
-      actions: setup.extension_connected
-        ? undefined
-        : [
-            { label: 'Connect', to: '/settings#extension', primary: true },
-            { label: 'Install', to: '/extension/install' },
-          ],
-    },
+    deliverabilityStep(setup.mail_health ?? null, setup.mailbox_enabled),
   ]
 }
 

@@ -1,16 +1,16 @@
 import { ActivityFeed } from '@/components/agent/ActivityFeed'
 import { AutopilotControlPanel } from '@/components/agent/AutopilotControlPanel'
 import { CountTiles } from '@/components/agent/CountTiles'
-import { ExtensionWarning } from '@/components/agent/ExtensionWarning'
 import { RunSummaryCard } from '@/components/agent/RunSummaryCard'
 import { SetupChecklist } from '@/components/agent/SetupChecklist'
 import { ErrorState } from '@/components/ErrorState'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useAgentOverview } from '@/hooks/useAgent'
+import { useAgentOverview, useEnsureSendTimezone } from '@/hooks/useAgent'
 
 /** /agent — the autopilot command center (home after login). */
 export function Autopilot() {
   const { data, dataUpdatedAt, isLoading, isError, error, refetch, isRefetching } = useAgentOverview()
+  useEnsureSendTimezone(data?.profile)
 
   if (isLoading) return <AutopilotSkeleton />
 
@@ -30,7 +30,6 @@ export function Autopilot() {
   return (
     <div className="space-y-6">
       <AutopilotControlPanel overview={data} />
-      <ExtensionWarning overview={data} />
       <SetupChecklist setup={data.setup} profile={data.profile} />
       <CountTiles overview={data} />
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
