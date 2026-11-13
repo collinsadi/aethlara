@@ -22,6 +22,8 @@ export const LIMITS = {
   maxAgeDays: { min: 0, max: 365 },
   minScore: { min: 0, max: 100 },
   dailyLimit: { min: 1, max: 100 },
+  sendDelay: { min: 5, max: 1440 },
+  sendWindowHours: 2,
   autoApprove: { min: 50, max: 100 },
   runInterval: { min: 1, max: 168 },
   yearsOfExperience: { min: 0, max: 60 },
@@ -168,6 +170,43 @@ export function pickRules(p: AgentProfile): RulesDraft {
   return { ...p.apply_settings, run_interval_hours: p.run_interval_hours }
 }
 
+/** The browser's IANA timezone ("Africa/Lagos"), or "" when unavailable. */
+export function browserTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone ?? ''
+  } catch {
+    return ''
+  }
+}
+
+/** IANA timezones for the sending-window picker (current value kept first). */
+export function timezoneOptions(current: string): string[] {
+  let zones: string[] = []
+  try {
+    zones = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.('timeZone') ?? []
+  } catch {
+    zones = []
+  }
+  if (!zones.includes('UTC')) zones = ['UTC', ...zones]
+  if (current && !zones.includes(current)) zones = [current, ...zones]
+  return zones
+}
+
+/** Hours 0–24 for the sending window selects: "08:00". */
+export function hourLabel(h: number): string {
+  return `${String(h).padStart(2, '0')}:00`
+}
+
+export const SEND_DELAYS = [
+  { minutes: 15, label: '15 minutes' },
+  { minutes: 30, label: '30 minutes' },
+  { minutes: 60, label: '1 hour' },
+  { minutes: 120, label: '2 hours' },
+  { minutes: 240, label: '4 hours' },
+  { minutes: 720, label: '12 hours' },
+  { minutes: 1440, label: '24 hours' },
+]
+
 export function validateRules(d: RulesDraft): Partial<Record<keyof RulesDraft, string>> {
   const errors: Partial<Record<keyof RulesDraft, string>> = {}
   const daily = rangeError(d.daily_limit, LIMITS.dailyLimit.min, LIMITS.dailyLimit.max, 'daily limit')
@@ -178,6 +217,11 @@ export function validateRules(d: RulesDraft): Partial<Record<keyof RulesDraft, s
   }
   const interval = rangeError(d.run_interval_hours, LIMITS.runInterval.min, LIMITS.runInterval.max, 'run interval')
   if (interval) errors.run_interval_hours = interval
+  const delay = rangeError(d.send_delay_minutes, LIMITS.sendDelay.min, LIMITS.sendDelay.max, 'send delay')
+  if (delay) errors.send_delay_minutes = delay
+  if (d.send_window_end - d.send_window_start < LIMITS.sendWindowHours) {
+    errors.send_window_end = `The sending window must be at least ${LIMITS.sendWindowHours} hours long.`
+  }
   return errors
 }
 

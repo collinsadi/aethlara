@@ -23,6 +23,7 @@ import {
 } from '@/api/agent'
 import type { AgentEvent, AgentOverview, AgentProfile, AgentProfileUpdate, AgentRun } from '@/lib/agentTypes'
 import { summarizeRunStats } from '@/lib/agentFormat'
+import { browserTimezone } from '@/lib/agentSettings'
 import { hasErrorCode } from '@/lib/apiError'
 import { queryKeys } from '@/lib/queryKeys'
 import { toast } from '@/lib/toast'
@@ -104,6 +105,38 @@ export function useToggleAutopilot() {
       qc.invalidateQueries({ queryKey: queryKeys.agent.overview() })
     },
   })
+}
+
+/** Pause or resume the send queue (scheduled emails wait while paused). */
+export function useSendingPause() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (paused: boolean) => updateAgentProfileApi({ sending_paused: paused }),
+    onSuccess: (profile) => writeProfile(qc, profile),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.agent.overview() })
+      qc.invalidateQueries({ queryKey: queryKeys.agent.applications() })
+    },
+  })
+}
+
+/**
+ * Emails go out inside a sending window in the user's timezone. Profiles
+ * start without one (UTC); fill in the browser's timezone once so the
+ * window means the user's local business hours.
+ */
+export function useEnsureSendTimezone(profile: AgentProfile | undefined) {
+  const update = useUpdateAgentProfile()
+  const sent = useRef(false)
+  const { mutate } = update
+  useEffect(() => {
+    if (!profile || sent.current || profile.apply_settings.send_timezone) return
+    const tz = browserTimezone()
+    if (!tz) return
+    sent.current = true
+    // apply_settings is merged on the server: only this key changes.
+    mutate({ apply_settings: { send_timezone: tz } })
+  }, [profile, mutate])
 }
 
 // ── Sources ──────────────────────────────────────────────────────────────────

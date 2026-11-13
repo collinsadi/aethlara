@@ -19,8 +19,18 @@ export type LeadStatus =
 
 export type DismissReason = 'user' | 'low_score' | 'dealbreaker' | 'cancelled'
 
-/** `cold_email`: the posting could not be read, so the agent emailed an address the company publishes. */
+/**
+ * Every new application is an email. `cold_email`: the posting could not be
+ * read, so the agent emailed an address the company publishes. `browser` only
+ * appears on applications from before applying became email-only.
+ */
 export type ApplyChannel = 'browser' | 'email' | 'cold_email'
+
+/** Where an application's email address came from. */
+export type RecipientKind = 'posting' | 'hiring' | 'general' | 'person' | 'user'
+
+/** What the email provider reported after the email was sent. */
+export type DeliveryStatus = 'delivered' | 'delayed' | 'bounced' | 'complained' | 'failed' | 'suppressed'
 
 /** Fit labels produced by the lead-scoring prompt. */
 export type MatchFit = 'strong' | 'good' | 'stretch' | 'poor'
@@ -31,11 +41,13 @@ export type AgentApplicationStatus =
   | 'ready'
   | 'in_progress'
   | 'needs_input'
+  | 'scheduled'
   | 'submitted'
   | 'failed'
   | 'cancelled'
 
 export type NeedsReason =
+  | 'no_email'
   | 'missing_answers'
   | 'captcha'
   | 'login_required'
@@ -56,6 +68,7 @@ export type EventKind =
   | 'source_error'
   | 'lead_approved'
   | 'application_prepared'
+  | 'application_scheduled'
   | 'application_emailed'
   | 'application_submitted'
   | 'application_needs_input'
@@ -63,6 +76,9 @@ export type EventKind =
   | 'mail_received'
   | 'status_changed'
   | 'digest_sent'
+  | 'email_bounced'
+  | 'email_complained'
+  | 'sending_paused'
 
 export type MessageCategory =
   | 'confirmation'
@@ -163,6 +179,14 @@ export interface ApplySettings {
   important_alerts: boolean
   /** When a posting can't be read, email an address the company publishes instead of failing. */
   cold_email_fallback: boolean
+  /** Prepared emails wait at least this long before sending (the undo window), 5–1440. */
+  send_delay_minutes: number
+  /** Sending window in `send_timezone`: hours [start, end), at least 2 hours long. */
+  send_window_start: number
+  send_window_end: number
+  send_weekdays_only: boolean
+  /** IANA timezone, e.g. "Europe/London". Empty = UTC. */
+  send_timezone: string
 }
 
 export interface AgentProfile {
@@ -180,15 +204,17 @@ export interface AgentProfile {
   updated_at: string
 }
 
-/** `PUT /agent/profile` accepts any subset; objects are replaced whole. */
+/** `PUT /agent/profile` accepts any subset; objects are replaced whole except apply_settings, which is merged. */
 export interface AgentProfileUpdate {
   enabled?: boolean
   resume_id?: string
   mailbox_local_part?: string
   search_prefs?: SearchPrefs
   application_profile?: ApplicationProfile
-  apply_settings?: ApplySettings
+  apply_settings?: Partial<ApplySettings>
   run_interval_hours?: number
+  /** true holds every scheduled email until it is set back to false. */
+  sending_paused?: boolean
 }
 
 // ── Overview ─────────────────────────────────────────────────────────────────
@@ -202,6 +228,42 @@ export interface AgentSetup {
   mailbox_enabled: boolean
   inbound_enabled: boolean
   extension_connected: boolean
+  /** Deliverability of the agent's sending domain; null before the first check. */
+  mail_health: MailHealthReport | null
+}
+
+export type MailHealthStatus = 'ok' | 'warn' | 'fail' | 'unknown'
+
+export interface MailHealthCheck {
+  id: 'domain' | 'sending' | 'tracking' | 'dkim' | 'spf' | 'dmarc' | 'mx' | 'webhook' | string
+  label: string
+  status: MailHealthStatus
+  detail: string
+}
+
+export interface MailHealthReport {
+  domain: string
+  status: MailHealthStatus
+  checked_at: string
+  checks: MailHealthCheck[]
+  /** false while the provider says the domain cannot send: scheduled emails wait. */
+  can_send: boolean
+}
+
+/** The send queue: emails are spaced out inside the sending window. */
+export interface SendingSummary {
+  paused: boolean
+  /** null while paused by the user (until they resume). */
+  paused_until: string | null
+  pause_reason: string | null
+  paused_by_user: boolean
+  scheduled: number
+  next_send_at: string | null
+  sent_last_24h: number
+  /** Emails the mailbox may send today (lower while a new mailbox warms up). */
+  daily_cap: number
+  warming_up: boolean
+  timezone: string
 }
 
 export interface AgentCounts {
@@ -220,6 +282,7 @@ export interface RunStats {
   strong_matches: number
   auto_approved: number
   prepared: number
+  emails_scheduled: number
   emails_sent: number
   ready_for_browser: number
   failed: number
@@ -251,6 +314,7 @@ export interface AgentEvent {
 export interface AgentOverview {
   profile: AgentProfile
   setup: AgentSetup
+  sending: SendingSummary
   counts: AgentCounts
   running_run: AgentRun | null
   last_run: AgentRun | null
@@ -304,7 +368,7 @@ export interface Lead {
   /** The source's own posting page (attribution link). */
   url: string
   apply_url: string | null
-  /** Where the resume is emailed when `apply_channel` is "email". */
+  /** The address the posting says to apply to; without one the agent looks up an address the company publishes. */
   apply_email: string | null
   apply_channel: ApplyChannel
   ats: string | null
@@ -387,6 +451,13 @@ export interface AgentApplication {
   result: ApplicationResult | null
   claim_expires_at: string | null
   submitted_at: string | null
+  recipient_kind: RecipientKind | null
+  /** The page the address was published on. */
+  recipient_source: string | null
+  /** When the email goes out (status "scheduled"). */
+  scheduled_at: string | null
+  delivery_status: DeliveryStatus | null
+  delivery_detail: string | null
   created_at: string
   updated_at: string
   lead: { title: string; company: string; score: number | null; url: string }

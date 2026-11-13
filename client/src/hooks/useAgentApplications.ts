@@ -1,6 +1,7 @@
 /**
- * Autopilot applications: grouped lists, detail (with cover letter) and the
- * user actions — answer questions, retry, cancel, mark as applied by hand.
+ * Autopilot applications: grouped lists, detail (with the email) and the
+ * user actions — retry, cancel, send to another address, mark as applied by
+ * hand.
  */
 import {
   useInfiniteQuery,
@@ -16,6 +17,7 @@ import {
   listApplicationsApi,
   markApplicationSubmittedApi,
   retryApplicationApi,
+  setApplicationRecipientApi,
 } from '@/api/agent'
 import type { QuestionAnswer } from '@/lib/agentTypes'
 import { queryKeys } from '@/lib/queryKeys'
@@ -32,7 +34,7 @@ export function useApplicationList(status: string, options: { poll?: boolean; en
       last.pagination.has_next ? last.pagination.page + 1 : undefined,
     staleTime: 20_000,
     refetchOnWindowFocus: true,
-    // The extension claims and submits in the background.
+    // The send queue sends scheduled emails in the background.
     refetchInterval: options.poll ? 15_000 : false,
     enabled: options.enabled ?? true,
   })
@@ -69,6 +71,14 @@ export function useRetryApplication() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => retryApplicationApi(id),
+    onSettled: () => refreshApplications(qc),
+  })
+}
+
+export function useSetApplicationRecipient() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, email }: { id: string; email: string }) => setApplicationRecipientApi(id, email),
     onSettled: () => refreshApplications(qc),
   })
 }

@@ -14,6 +14,7 @@
  * GET    /agent/applications              → Paginated<AgentApplication>
  * GET    /agent/applications/:id          → AgentApplication (+ cover_letter)
  * POST   /agent/applications/:id/answers|retry|cancel → AgentApplication
+ * POST   /agent/applications/:id/recipient → AgentApplication (send it to this address)
  * GET    /agent/inbox · GET /agent/inbox/:id · POST /agent/inbox/:id/read
  * GET    /agent/answers · PUT /agent/answers · DELETE /agent/answers/:id
  */
@@ -166,6 +167,14 @@ export async function answerApplicationApi(
 
 export async function retryApplicationApi(id: string): Promise<AgentApplication> {
   const res = await apiClient.post<ApiSuccessResponse<AgentApplication>>(`/agent/applications/${id}/retry`)
+  return res.data.data!
+}
+
+/** Send this application to an address the user chose (re-queued for the next run). */
+export async function setApplicationRecipientApi(id: string, email: string): Promise<AgentApplication> {
+  const res = await apiClient.post<ApiSuccessResponse<AgentApplication>>(`/agent/applications/${id}/recipient`, {
+    email,
+  })
   return res.data.data!
 }
 

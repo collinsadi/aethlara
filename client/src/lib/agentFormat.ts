@@ -4,6 +4,7 @@
  */
 import type {
   AgentApplicationStatus,
+  DeliveryStatus,
   DismissReason,
   EmploymentType,
   EventLevel,
@@ -12,6 +13,7 @@ import type {
   MatchFit,
   MessageCategory,
   NeedsReason,
+  RecipientKind,
   Seniority,
   WatchlistAts,
 } from '@/lib/agentTypes'
@@ -57,16 +59,25 @@ export const APPLICATION_STATUS_META: Record<
   { label: string; tone: Tone; help: string }
 > = {
   queued: { label: 'Queued', tone: 'neutral', help: 'Will be prepared on the next run.' },
-  preparing: { label: 'Preparing', tone: 'warning', help: 'Tailoring your resume and cover letter.' },
-  ready: { label: 'Ready for extension', tone: 'brand', help: 'Waiting for the Chrome extension to pick it up.' },
-  in_progress: { label: 'Extension applying', tone: 'warning', help: 'The extension is filling the form now.' },
+  preparing: { label: 'Preparing', tone: 'warning', help: 'Tailoring your resume and writing the email.' },
+  scheduled: {
+    label: 'Scheduled',
+    tone: 'brand',
+    help: 'Prepared and waiting for its send time. You can still cancel it.',
+  },
+  ready: { label: 'Ready for extension', tone: 'brand', help: 'From before applying became email-only.' },
+  in_progress: { label: 'Extension applying', tone: 'warning', help: 'From before applying became email-only.' },
   needs_input: { label: 'Needs you', tone: 'warning', help: 'The agent is waiting on you.' },
-  submitted: { label: 'Submitted', tone: 'success', help: 'Application sent.' },
+  submitted: { label: 'Sent', tone: 'success', help: 'The application email went out.' },
   failed: { label: 'Failed', tone: 'danger', help: 'Something went wrong. You can retry.' },
   cancelled: { label: 'Cancelled', tone: 'muted', help: 'You cancelled this application.' },
 }
 
 export const NEEDS_REASON_META: Record<NeedsReason, { label: string; help: string }> = {
+  no_email: {
+    label: 'No address to send it to',
+    help: "The posting doesn't give one and the company doesn't publish one. Add the recruiter's or company's address and the next run sends it — or cancel.",
+  },
   missing_answers: {
     label: 'Questions only you can answer',
     help: 'Answer once — the agent saves your answers and reuses them on every future form.',
@@ -100,6 +111,46 @@ export function needsReasonMeta(reason: string): { label: string; help: string }
       help: 'Open the application to see what is needed.',
     }
   )
+}
+
+/** What the provider reported after sending. */
+export const DELIVERY_STATUS_META: Record<DeliveryStatus, { label: string; tone: Tone; help: string }> = {
+  delivered: { label: 'Delivered', tone: 'success', help: "Accepted by the recipient's mail server." },
+  delayed: {
+    label: 'Delivery delayed',
+    tone: 'warning',
+    help: "The recipient's server is slow to accept it; the provider keeps retrying.",
+  },
+  bounced: { label: 'Bounced', tone: 'danger', help: 'The address rejected it. The agent never emails it again.' },
+  complained: {
+    label: 'Marked as spam',
+    tone: 'danger',
+    help: 'The recipient reported it as spam. The agent never emails them again.',
+  },
+  failed: { label: 'Not sent', tone: 'danger', help: 'The email provider could not send it.' },
+  suppressed: {
+    label: 'Suppressed',
+    tone: 'danger',
+    help: 'Not sent: an earlier email to this address bounced or was marked as spam.',
+  },
+}
+
+/** "the address in the posting", "a careers address Acme publishes", ... */
+export function recipientLabel(kind: RecipientKind | null | undefined): string | null {
+  switch (kind) {
+    case 'posting':
+      return 'the address in the posting'
+    case 'hiring':
+      return 'a hiring address the company publishes'
+    case 'general':
+      return 'a general address the company publishes'
+    case 'person':
+      return 'a person named on a job page'
+    case 'user':
+      return 'the address you gave'
+    default:
+      return null
+  }
 }
 
 // ── Sources / ATS ────────────────────────────────────────────────────────────
@@ -296,9 +347,10 @@ export function safeHref(url: string | null | undefined): string | undefined {
   }
 }
 
-/** One-line run summary: "12 new jobs to review · 2 ready for the extension". */
+/** One-line run summary: "12 new jobs to review · 2 applications scheduled to send". */
 export function summarizeRunStats(stats: {
   new_leads: number
+  emails_scheduled?: number
   emails_sent: number
   ready_for_browser: number
   failed: number
@@ -307,6 +359,7 @@ export function summarizeRunStats(stats: {
   const parts: string[] = []
   if (stats.new_leads > 0) parts.push(`${pluralize(stats.new_leads, 'new job')} to review`)
   if (stats.auto_approved > 0) parts.push(`${stats.auto_approved} auto-approved`)
+  if (stats.emails_scheduled) parts.push(`${pluralize(stats.emails_scheduled, 'application')} scheduled to send`)
   if (stats.emails_sent > 0) parts.push(`${pluralize(stats.emails_sent, 'application')} emailed`)
   if (stats.ready_for_browser > 0) parts.push(`${stats.ready_for_browser} ready for the extension`)
   if (stats.failed > 0) parts.push(`${stats.failed} failed`)

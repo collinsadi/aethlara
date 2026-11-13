@@ -4,13 +4,17 @@ import {
   ArrowRightLeft,
   CheckCircle2,
   CircleHelp,
+  Clock,
   FileCheck2,
   Flag,
   Loader2,
   Mail,
   MailCheck,
+  MailX,
+  OctagonPause,
   Play,
   Send,
+  ShieldAlert,
   Sparkles,
   ThumbsUp,
   WifiOff,
@@ -36,6 +40,7 @@ const KIND_ICON: Record<EventKind, LucideIcon> = {
   source_error: WifiOff,
   lead_approved: ThumbsUp,
   application_prepared: FileCheck2,
+  application_scheduled: Clock,
   application_emailed: Send,
   application_submitted: CheckCircle2,
   application_needs_input: CircleHelp,
@@ -43,12 +48,16 @@ const KIND_ICON: Record<EventKind, LucideIcon> = {
   mail_received: Mail,
   status_changed: ArrowRightLeft,
   digest_sent: MailCheck,
+  email_bounced: MailX,
+  email_complained: ShieldAlert,
+  sending_paused: OctagonPause,
 }
 
 /** Where an event should take the user, if anywhere. */
 function eventLink(e: AgentEvent): { to: string; label: string } | null {
   if (e.kind === 'mail_received') return { to: '/inbox', label: 'Open inbox' }
   if (e.kind === 'leads_found') return { to: '/review', label: 'Review' }
+  if (e.kind === 'sending_paused') return { to: '/applications', label: 'Open applications' }
   if (e.application_id) return { to: `/applications?highlight=${e.application_id}`, label: 'View application' }
   if (e.lead_id) return { to: `/review?lead=${e.lead_id}`, label: 'View job' }
   return null
