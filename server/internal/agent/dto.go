@@ -103,16 +103,16 @@ type leadDTO struct {
 }
 
 func toLeadDTO(l *Lead, withDescription bool) leadDTO {
-	channel := ChannelBrowser
-	if l.ApplyEmail != nil && *l.ApplyEmail != "" {
-		channel = ChannelEmail
-	}
+	// Every application is an email: to apply_email when the posting gives
+	// one, otherwise to an address the company publishes (found when the
+	// application is prepared). auto_apply_supported is kept for older
+	// clients and is always true.
 	d := leadDTO{
 		ID: l.ID, Source: l.Source, SourceLabel: l.SourceLabel, Title: l.Title, Company: l.Company,
 		Location: l.Location, IsRemote: l.IsRemote, EmploymentType: l.EmploymentType,
 		Salary: salaryDTO{Min: l.SalaryMin, Max: l.SalaryMax, Currency: l.SalaryCurrency, Text: l.SalaryText},
-		URL:    l.URL, ApplyURL: l.ApplyURL, ApplyEmail: l.ApplyEmail, ApplyChannel: channel, ATS: l.ATS,
-		AutoApplySupported: channel == ChannelEmail || (l.ATS != nil && sources.AutoApplySupported(*l.ATS)),
+		URL:    l.URL, ApplyURL: l.ApplyURL, ApplyEmail: l.ApplyEmail, ApplyChannel: ChannelEmail, ATS: l.ATS,
+		AutoApplySupported: true,
 		PostedAt:           l.PostedAt, Status: l.Status, DismissReason: l.DismissReason, DecidedAt: l.DecidedAt,
 		JobID: l.JobID, CreatedAt: l.CreatedAt,
 	}
@@ -158,9 +158,18 @@ type applicationDTO struct {
 	Result            json.RawMessage `json:"result"`
 	ClaimExpiresAt    *time.Time      `json:"claim_expires_at"`
 	SubmittedAt       *time.Time      `json:"submitted_at"`
-	CreatedAt         time.Time       `json:"created_at"`
-	UpdatedAt         time.Time       `json:"updated_at"`
-	Lead              appLeadDTO      `json:"lead"`
+	// Where the address came from: posting | hiring | general | person | user.
+	RecipientKind   *string `json:"recipient_kind"`
+	RecipientSource *string `json:"recipient_source"`
+	// When the email is due to go out (status "scheduled").
+	ScheduledAt *time.Time `json:"scheduled_at"`
+	// What Resend reported after sending: delivered | delayed | bounced |
+	// complained | failed | suppressed (null until it reports).
+	DeliveryStatus *string    `json:"delivery_status"`
+	DeliveryDetail *string    `json:"delivery_detail"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+	Lead           appLeadDTO `json:"lead"`
 }
 
 func toApplicationDTO(a *Application, withCoverLetter bool) applicationDTO {
@@ -170,14 +179,47 @@ func toApplicationDTO(a *Application, withCoverLetter bool) applicationDTO {
 		HasCoverLetter:    a.CoverLetter != nil && *a.CoverLetter != "",
 		UseOriginalResume: a.UseOriginalResume, Attempts: a.Attempts, LastError: a.LastError, Needs: a.Needs,
 		Result: a.Result, ClaimExpiresAt: a.ClaimExpiresAt, SubmittedAt: a.SubmittedAt,
+		RecipientKind: a.RecipientKind, RecipientSource: a.RecipientSource,
+		DeliveryStatus: a.DeliveryStatus, DeliveryDetail: a.DeliveryDetail,
 		CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt,
 		Lead: appLeadDTO{Title: a.LeadTitle, Company: a.LeadCompany, Score: a.LeadScore, URL: a.LeadURL},
 	}
 	if len(d.Result) == 0 {
 		d.Result = json.RawMessage("null")
 	}
+	if a.Status == AppScheduled {
+		d.ScheduledAt = a.ScheduledAt
+	}
 	if withCoverLetter {
 		d.CoverLetter = a.CoverLetter
+	}
+	return d
+}
+
+// sendingDTO is the send queue summary on the overview.
+type sendingDTO struct {
+	Paused      bool       `json:"paused"`
+	PausedUntil *time.Time `json:"paused_until"`
+	PauseReason *string    `json:"pause_reason"`
+	// PausedByUser: resuming is the user's call (no end date).
+	PausedByUser bool       `json:"paused_by_user"`
+	Scheduled    int        `json:"scheduled"`
+	NextSendAt   *time.Time `json:"next_send_at"`
+	SentLast24h  int        `json:"sent_last_24h"`
+	DailyCap     int        `json:"daily_cap"`
+	WarmingUp    bool       `json:"warming_up"`
+	Timezone     string     `json:"timezone"`
+}
+
+func toSendingDTO(s Sending) sendingDTO {
+	d := sendingDTO{
+		Paused: s.PausedUntil != nil, PausedUntil: s.PausedUntil, PauseReason: s.PauseReason,
+		PausedByUser: s.PauseReason != nil && *s.PauseReason == userPauseReason,
+		Scheduled:    s.Scheduled, NextSendAt: s.NextSendAt, SentLast24h: s.SentLast24h,
+		DailyCap: s.DailyCap, WarmingUp: s.WarmingUp, Timezone: s.Timezone,
+	}
+	if d.PausedByUser {
+		d.PausedUntil = nil // "until you resume", not a date a century away
 	}
 	return d
 }

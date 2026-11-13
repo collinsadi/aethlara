@@ -122,7 +122,9 @@ func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
 			"mailbox_enabled":      o.Setup.MailboxEnabled,
 			"inbound_enabled":      o.Setup.InboundEnabled,
 			"extension_connected":  o.Setup.ExtensionConnected,
+			"mail_health":          o.MailHealth,
 		},
+		"sending": toSendingDTO(o.Sending),
 		"counts": map[string]any{
 			"leads":            o.Leads,
 			"applications":     o.Applications,
@@ -161,6 +163,7 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		ApplicationProfile *ApplicationProfile `json:"application_profile"`
 		ApplySettings      json.RawMessage     `json:"apply_settings"`
 		RunIntervalHours   *int                `json:"run_interval_hours"`
+		SendingPaused      *bool               `json:"sending_paused"`
 	}
 	if !decode(w, r, 256<<10, &body) {
 		return
@@ -169,6 +172,7 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		Enabled: body.Enabled, ResumeID: body.ResumeID, MailboxLocalPart: body.MailboxLocalPart,
 		SearchPrefs: body.SearchPrefs, ApplicationProfile: body.ApplicationProfile,
 		ApplySettingsPatch: body.ApplySettings, RunIntervalHours: body.RunIntervalHours,
+		SendingPaused: body.SendingPaused,
 	})
 	if err != nil {
 		h.fail(w, r, err)
@@ -410,7 +414,7 @@ func (h *Handler) ListApplications(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	valid := map[string]bool{AppQueued: true, AppPreparing: true, AppReady: true, AppInProgress: true,
+	valid := map[string]bool{AppQueued: true, AppPreparing: true, AppScheduled: true, AppReady: true, AppInProgress: true,
 		AppNeedsInput: true, AppSubmitted: true, AppFailed: true, AppCancelled: true}
 	var statuses []string
 	for _, s := range strings.Split(r.URL.Query().Get("status"), ",") {
@@ -636,6 +640,30 @@ func (h *Handler) RetryApplication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.Success(w, http.StatusOK, toApplicationDTO(app, false), "")
+}
+
+func (h *Handler) SetRecipient(w http.ResponseWriter, r *http.Request) {
+	uid, ok := userID(w, r)
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Email string `json:"email"`
+	}
+	if !decode(w, r, 4<<10, &body) {
+		return
+	}
+	app, err := h.svc.SetRecipient(r.Context(), uid, id, body.Email)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	response.Success(w, http.StatusOK, toApplicationDTO(app, false),
+		"Saved. The next run prepares the email to this address and schedules it.")
 }
 
 func (h *Handler) CancelApplication(w http.ResponseWriter, r *http.Request) {

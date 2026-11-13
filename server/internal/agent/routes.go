@@ -62,6 +62,7 @@ func RegisterRoutes(r chi.Router, h *Handler, cfg *config.Config, aiGate func(ht
 		r.Post("/applications/{id}/result", h.ReportResult)
 		r.Post("/applications/{id}/answers", h.SaveApplicationAnswers)
 		r.Post("/applications/{id}/retry", h.RetryApplication)
+		r.Post("/applications/{id}/recipient", h.SetRecipient)
 		r.Post("/applications/{id}/cancel", h.CancelApplication)
 
 		r.Get("/inbox", h.ListInbox)
