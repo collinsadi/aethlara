@@ -122,6 +122,22 @@ type Config struct {
 	AgentMaxLeadsScoredPerRun int
 	AgentSourceCacheMinutes   int
 	AgentClaimLeaseMinutes    int
+
+	// Agent email sending (see internal/agent/schedule.go and outbox.go).
+	// AgentMailMaxPerHour caps emails sent per hour across every mailbox:
+	// they all share the sending domain's reputation.
+	AgentMailMaxPerHour int
+	// AgentMailMaxPerMailboxDay is the most any one mailbox may send per
+	// day, whatever the user's daily limit.
+	AgentMailMaxPerMailboxDay int
+	// Gap between two emails from one mailbox: a random value in
+	// [AgentMailMinGapMinutes, AgentMailMaxGapMinutes].
+	AgentMailMinGapMinutes int
+	AgentMailMaxGapMinutes int
+	// AgentMailSenderEnabled runs the send queue worker. Turn it off on an
+	// instance that must not send (e.g. a local server pointed at a shared
+	// database); scheduled emails then wait for an instance that sends.
+	AgentMailSenderEnabled bool
 }
 
 func Load() (*Config, error) {
@@ -242,6 +258,12 @@ func Load() (*Config, error) {
 		AgentMaxLeadsScoredPerRun: parseInt("AGENT_MAX_LEADS_SCORED_PER_RUN", 40),
 		AgentSourceCacheMinutes:   parseInt("AGENT_SOURCE_CACHE_MINUTES", 180),
 		AgentClaimLeaseMinutes:    parseInt("AGENT_CLAIM_LEASE_MINUTES", 15),
+
+		AgentMailMaxPerHour:       parseInt("AGENT_MAIL_MAX_PER_HOUR", 30),
+		AgentMailMaxPerMailboxDay: parseInt("AGENT_MAIL_MAX_PER_MAILBOX_PER_DAY", 40),
+		AgentMailMinGapMinutes:    parseInt("AGENT_MAIL_MIN_GAP_MINUTES", 6),
+		AgentMailMaxGapMinutes:    parseInt("AGENT_MAIL_MAX_GAP_MINUTES", 18),
+		AgentMailSenderEnabled:    parseBool("AGENT_MAIL_SENDER_ENABLED", true),
 	}
 
 	originsStr := optional("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
