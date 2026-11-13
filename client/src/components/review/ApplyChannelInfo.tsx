@@ -1,75 +1,47 @@
-import { AlertTriangle, Mail, Puzzle } from 'lucide-react'
+import { Mail, MailSearch } from 'lucide-react'
 import type { Lead } from '@/lib/agentTypes'
-import { atsLabel } from '@/lib/agentFormat'
 import { cn } from '@/lib/utils'
 
-/** Compact channel label for list rows: "Email" or "Extension". */
+/** Compact channel label for list rows. Every application is an email. */
 export function ApplyChannelTag({ lead, className }: { lead: Lead; className?: string }) {
-  const email = lead.apply_channel === 'email'
-  const Icon = email ? Mail : Puzzle
+  const known = !!lead.apply_email
+  const Icon = known ? Mail : MailSearch
   return (
     <span
       className={cn('inline-flex items-center gap-1 text-[11px] text-muted-foreground', className)}
       title={
-        email
-          ? `Applies by email${lead.apply_email ? ` to ${lead.apply_email}` : ''}`
-          : lead.auto_apply_supported
-            ? `The extension fills the ${atsLabel(lead.ats) ?? ''} form`
-            : 'The extension will try, but a manual step is likely'
+        known
+          ? `Applies by email to ${lead.apply_email}`
+          : 'Applies by email to an address the company publishes, found when the application is prepared'
       }
     >
       <Icon className="size-3" aria-hidden />
-      {email ? 'Email' : 'Extension'}
-      {!email && !lead.auto_apply_supported && (
-        <AlertTriangle className="size-3 text-warning" role="img" aria-label="Manual step likely" />
-      )}
+      Email
     </span>
   )
 }
 
 /** Detail-pane explanation of exactly what approving will do. */
 export function ApplyChannelInfo({ lead, coverLetters }: { lead: Lead; coverLetters?: boolean }) {
-  if (lead.apply_channel === 'email') {
-    return (
-      <div className="flex items-start gap-3 rounded-xl border border-border bg-muted/30 p-3.5">
-        <Mail className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden />
-        <div className="min-w-0 text-sm">
-          <p className="font-medium text-foreground">Applies by email</p>
-          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-            On the next run the agent emails your tailored resume
-            {coverLetters !== false && ' and a cover letter'} from your agent mailbox to{' '}
-            {lead.apply_email ? (
-              <span className="break-all font-medium text-foreground">{lead.apply_email}</span>
-            ) : (
-              'the address in the posting'
-            )}
-            .
-          </p>
-        </div>
-      </div>
-    )
-  }
-  const ats = atsLabel(lead.ats)
+  const known = !!lead.apply_email
+  const Icon = known ? Mail : MailSearch
+  const what = coverLetters === false ? 'your tailored resume with a short note' : 'your tailored resume with a tailored email'
   return (
-    <div
-      className={cn(
-        'flex items-start gap-3 rounded-xl border p-3.5',
-        lead.auto_apply_supported ? 'border-border bg-muted/30' : 'border-warning/30 bg-warning/[0.08]'
-      )}
-    >
-      {lead.auto_apply_supported ? (
-        <Puzzle className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden />
-      ) : (
-        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
-      )}
+    <div className="flex items-start gap-3 rounded-xl border border-border bg-muted/30 p-3.5">
+      <Icon className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden />
       <div className="min-w-0 text-sm">
-        <p className="font-medium text-foreground">
-          {lead.auto_apply_supported ? `Applies through the Chrome extension${ats ? ` · ${ats}` : ''}` : 'Manual step likely'}
-        </p>
+        <p className="font-medium text-foreground">Applies by email</p>
         <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-          {lead.auto_apply_supported
-            ? `After the next run prepares it, the extension opens the ${ats ?? 'application'} form in your browser, fills it in and submits it.`
-            : `This isn't a form the extension knows${ats ? ` (${ats})` : ''}. It will still try to fill it in your browser, but you'll probably need to finish the application yourself.`}
+          The next run prepares {what} and schedules it from your agent mailbox to{' '}
+          {known ? (
+            <span className="break-all font-medium text-foreground">{lead.apply_email}</span>
+          ) : (
+            <>
+              an address {lead.company || 'the company'} publishes for hiring (careers@, jobs@…). If it can't find one,
+              it asks you for an address
+            </>
+          )}
+          . It goes out later, spaced from your other applications, inside your sending window.
         </p>
       </div>
     </div>
