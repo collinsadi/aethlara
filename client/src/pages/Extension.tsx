@@ -41,13 +41,6 @@ const features = [
     highlight: true,
   },
   {
-    icon: Sparkles,
-    title: "Applies for your autopilot",
-    body: "Approve jobs on your dashboard and the extension works through the queue in your own browser: it opens each form, fills it, uploads your tailored resume and submits. Anything only you can answer comes back to you once.",
-    badge: "New",
-    highlight: true,
-  },
-  {
     icon: ScanLine,
     title: "One-click job extraction",
     body: "Browsing LinkedIn, Indeed, or any company careers page? Extract the full posting and see your match score before saving it to your dashboard.",

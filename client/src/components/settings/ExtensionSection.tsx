@@ -53,8 +53,8 @@ export function ExtensionSection() {
       <div>
         <h2 className="font-heading text-base font-semibold text-foreground">Chrome extension</h2>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          The extension fills and submits form applications the autopilot prepares, and lets you send any job you're
-          looking at to the agent. Connect once — it stays signed in with a device token you can revoke here.
+          The autopilot applies by email, so the extension is optional: it lets you send any job you're looking at to
+          the agent or into your tracker. Connect once — it stays signed in with a device token you can revoke here.
         </p>
       </div>
 
@@ -104,7 +104,7 @@ export function ExtensionSection() {
             <ErrorState compact error={devices.error} title="Couldn't load connected browsers" onRetry={() => devices.refetch()} />
           ) : list.length === 0 ? (
             <p className="mt-2 text-sm text-muted-foreground">
-              None yet. Form applications wait in Applications until a browser is connected.
+              None yet. Applying doesn't need one — connect it only to send jobs from your browser.
             </p>
           ) : (
             <ul className="mt-2 divide-y divide-border">

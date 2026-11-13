@@ -30,7 +30,7 @@ const EMPTY_COPY: Record<string, string> = {
   interviews: 'No interview invitations yet.',
   rejections: 'No rejections. Good news travels slower, but it travels.',
   confirmations: 'No application confirmations yet.',
-  verification: 'No verification codes. When a form emails a code, the extension picks it up from here.',
+  verification: 'No verification codes. Codes sent to your agent address show up here.',
   sent: 'No emailed applications yet. Applications sent by email appear here.',
 }
 

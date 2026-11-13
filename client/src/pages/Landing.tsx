@@ -32,7 +32,7 @@ const steps = [
   {
     n: "03",
     title: "You approve, it applies",
-    body: "Approve the good ones in seconds. The next run emails your tailored resume, or the Chrome extension fills and submits the form.",
+    body: "Approve the good ones in seconds. The next run writes each an email with your tailored resume and sends it from your agent's mailbox, spaced out during working hours.",
   },
   {
     n: "04",
@@ -52,11 +52,11 @@ const features = [
   },
   {
     title: "You approve. It applies.",
-    body: "Nothing goes out without your OK (unless you opt in to auto-approve strong matches). Email applications are sent from your agent mailbox; forms are filled and submitted by the extension.",
+    body: "Nothing goes out without your OK (unless you opt in to auto-approve strong matches). Applications are emailed from your agent mailbox to the address in the posting or the one the company publishes — and you can cancel any before it's sent.",
   },
   {
-    title: "Tailored resume and cover letter",
-    body: "Each application gets a version of your resume rewritten for the role and a short cover letter. Questions only you can answer, it asks once and remembers.",
+    title: "Tailored resume and email",
+    body: "Each application gets a version of your resume rewritten for the role and a short email written from it. Mail goes out paced and authenticated, so it lands in the inbox, not spam.",
   },
   {
     title: "Its own inbox, sorted by AI",
