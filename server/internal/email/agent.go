@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -47,6 +48,31 @@ type OutboundEmail struct {
 	Text        string
 	Attachments []Attachment
 	Headers     map[string]string
+	// IdempotencyKey makes retries safe: Resend returns the original
+	// response instead of sending again when it sees the same key within
+	// 24 hours (a crash between sending and recording the send).
+	IdempotencyKey string
+}
+
+// APIError is a non-2xx response from Resend.
+type APIError struct {
+	Status  int
+	Message string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("resend API error: HTTP %d: %s", e.Status, e.Message)
+}
+
+// IsPermanent reports whether a send failed for a reason retrying cannot
+// fix (Resend rejected the message itself: invalid recipient, sender or
+// content). Rate limits, quota, auth and server errors are temporary.
+func IsPermanent(err error) bool {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.Status == http.StatusBadRequest || apiErr.Status == http.StatusUnprocessableEntity
 }
 
 type resendAttachment struct {
@@ -101,7 +127,11 @@ func (c *Client) SendMessage(ctx context.Context, m OutboundEmail) (string, erro
 
 	sendCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	respBody, err := c.do(sendCtx, http.MethodPost, "/emails", body)
+	var headers map[string]string
+	if m.IdempotencyKey != "" {
+		headers = map[string]string{"Idempotency-Key": m.IdempotencyKey}
+	}
+	respBody, err := c.doWithHeaders(sendCtx, http.MethodPost, "/emails", body, headers)
 	if err != nil {
 		return "", err
 	}
@@ -207,6 +237,10 @@ func (c *Client) GetReceivedEmail(ctx context.Context, id string) (*ReceivedEmai
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]byte, error) {
+	return c.doWithHeaders(ctx, method, path, body, nil)
+}
+
+func (c *Client) doWithHeaders(ctx context.Context, method, path string, body []byte, headers map[string]string) ([]byte, error) {
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
@@ -218,6 +252,9 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]by
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 
 	client := &http.Client{Timeout: 45 * time.Second}
@@ -233,7 +270,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]by
 		if len(msg) > 300 {
 			msg = msg[:300] + "..."
 		}
-		return nil, fmt.Errorf("resend API error: HTTP %d: %s", resp.StatusCode, msg)
+		return nil, &APIError{Status: resp.StatusCode, Message: msg}
 	}
 	return respBody, nil
 }
