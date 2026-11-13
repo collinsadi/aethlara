@@ -36,10 +36,25 @@ type resendEvent struct {
 		ReceivedFor []string `json:"received_for"`
 		Subject     string   `json:"subject"`
 		CreatedAt   string   `json:"created_at"`
+		// Delivery events (email.bounced, email.failed, email.suppressed).
+		Bounce *struct {
+			Type    string `json:"type"`
+			SubType string `json:"subType"`
+			Message string `json:"message"`
+		} `json:"bounce"`
+		Failed *struct {
+			Reason string `json:"reason"`
+		} `json:"failed"`
+		Suppressed *struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"suppressed"`
 	} `json:"data"`
 }
 
-// HandleResendWebhook verifies and ingests one Resend webhook delivery.
+// HandleResendWebhook verifies and ingests one Resend webhook delivery:
+// inbound mail (email.received) and the delivery outcome of emails the
+// agent sent (delivered, delayed, bounced, complained, failed, suppressed).
 // Unknown event types and mail for addresses we do not host are accepted
 // (200) and ignored so Resend does not retry them.
 func (s *Service) HandleResendWebhook(ctx context.Context, h http.Header, body []byte) error {
@@ -53,7 +68,10 @@ func (s *Service) HandleResendWebhook(ctx context.Context, h http.Header, body [
 	if err := json.Unmarshal(body, &ev); err != nil {
 		return fmt.Errorf("%w: malformed webhook body", ErrInvalidInput)
 	}
-	if ev.Type != "email.received" || ev.Data.EmailID == "" {
+	if ev.Type != "email.received" {
+		return s.handleDelivery(ctx, &ev)
+	}
+	if ev.Data.EmailID == "" {
 		return nil
 	}
 
