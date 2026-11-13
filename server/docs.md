@@ -845,28 +845,37 @@ the DB with `deleted_at` set so analytics can still reason about activity.
 
 The autopilot searches job boards for the user, scores every posting against
 their resume, and asks the user to approve the ones worth applying to. On the
-next run it applies to everything approved:
+next run it prepares every approved application **as an email** from the
+user's agent mailbox, with the tailored resume attached:
 
-- **Email applications** (postings that say "send your CV to ...") are sent by
-  the server from the user's agent mailbox, with the tailored resume attached.
-- **Form applications** (Greenhouse, Lever, Ashby and other ATS pages) are
-  queued for the Chrome extension, which fills and submits them in the user's
-  own browser.
+- to the address the posting gives ("send your CV to ..."), or
+- to an address the company publishes for hiring (`careers@`, `jobs@`, ...),
+  found on its own site, or
+- to an address the user gives when the agent finds none.
+
+Prepared emails are not sent during the run. They wait in a **send queue**
+and go out one at a time, minutes apart, inside the user's sending window
+(see "Sending"). Resend reports each email's delivery back; addresses that
+bounce or draw a spam complaint are never emailed again.
 
 Replies arrive in the agent mailbox (Resend Inbound), are triaged by AI, and
 move the tracker automatically (confirmation -> applied, rejection ->
 rejected, interview/assessment -> interview, offer -> offer).
+
+The Chrome extension no longer applies: no new application is handed to it
+(see "Extension protocol").
 
 ### Run loop
 
 A run is triggered by the scheduler (every `run_interval_hours` while the
 profile is `enabled`) or manually (`POST /agent/runs`). Each run:
 
-1. **Applies** to approved leads (status `queued` applications), up to
-   `apply_settings.daily_limit` per rolling 24 hours: recover the full
-   posting if needed (see below), tailor the resume (same pipeline as
-   `POST /jobs`, recorded with `input_method: "agent"`), write a cover
-   letter, then email it or mark it `ready` for the extension.
+1. **Prepares** approved leads (status `queued` applications), no more than
+   the mailbox's daily cap minus what was sent in the last 24 hours and what
+   is already scheduled: recover the full posting if needed (see below),
+   tailor the resume (same pipeline as `POST /jobs`, recorded with
+   `input_method: "agent"`), find the address, write the email, and
+   schedule it (`scheduled`).
 2. **Discovers** new postings from every enabled source, drops what cannot
    fit (titles, excluded keywords/companies, remote/location, employment type,
    age for aggregators), removes duplicates, and scores up to
@@ -874,7 +883,7 @@ profile is `enabled`) or manually (`POST /agent/runs`). Each run:
    Leads below `search_prefs.min_score` (or with a deal-breaker) are stored as
    `dismissed` so they are never re-scored.
 3. **Auto-approves** leads at or above `apply_settings.auto_approve_score`
-   (off by default) and applies to them in the same run.
+   (off by default) and prepares them in the same run.
 4. **Expires** leads left unreviewed for 21 days and emails a **digest** to the
    account email.
 
@@ -926,8 +935,88 @@ resume attached:
   user's AI (template fallback). An address is emailed at most once per 14
   days; later applications to it fail with an explanation.
 
-With the fallback off, or when no address is found, the application fails
-with the reason.
+With the fallback off the application fails with the reason. When no
+address is found it waits for the user (`needs_input`, `needs.reason:
+"no_email"`; see `POST /agent/applications/:id/recipient`).
+
+**Finding the address.** Every application needs one, best source first:
+the address the user gave for it, the posting's own (`apply_email`: a
+`mailto:` link or "email your CV to ..." in the text), then an address the
+company publishes, found exactly as for cold emails. Each must look
+deliverable: a valid address on a domain with MX records, not a no-reply,
+`postmaster@` or `abuse@` inbox, not an agent mailbox, and not on the
+suppression list. Looking an address up (rather than using the posting's)
+needs an agent mailbox. `recipient_kind` records where it came from
+(`posting`, `hiring`, `general`, `person`, `user`) and `recipient_source`
+the page it was published on.
+
+**The email.** With `apply_settings.cover_letters` on, the user's AI writes
+a 120-220 word email from the tailored resume and the posting (prompt
+`application_email_v1.0.0`; the greeting depends on the recipient kind).
+A draft that is too short or long, contains placeholders, or trips the spam
+lint (capitalised subject, repeated `!!`, link shorteners, more than 4
+links, phrases such as "click here") is replaced by a plain template, as is
+every email when the setting is off. Subject: `Application for <title> -
+<name>`. Contact details are added under the name when the email is sent.
+
+### Sending
+
+The send queue (`agent_outbox`) is worked by a background worker every 30
+seconds; the run never sends. Each email gets a send time when it is
+scheduled, and the worker checks the rules again before sending, so emails
+that become due together (after a pause, downtime or a closed window) still
+leave spaced out:
+
+- **Delay:** at least `send_delay_minutes` (default 30, plus up to half again
+  at random) after it was prepared: the user's window to read or cancel it.
+- **Window:** only between `send_window_start` and `send_window_end` (local
+  hours, default 08-18) in `send_timezone` (IANA name, default UTC; the
+  dashboard fills in the browser's), on weekdays only when
+  `send_weekdays_only` (default on). Mail held overnight is spread over the
+  first 25 minutes of the window.
+- **Gap:** a random 6-18 minutes (`AGENT_MAIL_MIN_GAP_MINUTES`,
+  `AGENT_MAIL_MAX_GAP_MINUTES`) after the mailbox's previous email.
+- **Recipients:** 24 hours between emails to the same address, 2 hours
+  between emails to the same domain.
+- **Daily cap and warm-up:** at most `daily_limit` emails per local day,
+  never more than `AGENT_MAIL_MAX_PER_MAILBOX_PER_DAY` (40), and while the
+  mailbox is new: 5 on its first day, 3 more each day after (counted from
+  its first email), up to 50. Across all mailboxes, at most
+  `AGENT_MAIL_MAX_PER_HOUR` (30) emails per hour.
+
+Emails are sent through Resend with an `Idempotency-Key`, so a send retried
+after a crash never produces a second copy. Temporary failures (rate limits,
+5xx, network) are retried after 2 min, 10 min, 30 min, 2 h; Resend rejecting
+the message (400/422) or a fifth failure fails the application. The email
+is multipart: plain text plus an HTML part with the same content and nothing
+else (no images, tracking pixel, remote CSS or rewritten links). From is
+`<name> <mailbox>`, Reply-To the mailbox, and the resume is attached (the
+tailored PDF, else the original upload).
+
+**Deliverability.** Resend reports what happened to each email through the
+webhook (`email.delivered`, `email.delivery_delayed`, `email.bounced`,
+`email.complained`, `email.failed`, `email.suppressed`). A permanent bounce,
+a spam complaint or a Resend suppression puts the address on the
+platform-wide suppression list (`email_suppressions`): no agent emails it
+again, because every mailbox shares the domain's reputation. An undelivered
+application becomes `failed` (the user can redirect it). Sending pauses
+automatically for 24 hours when at least 3 of the user's emails in the last
+30 days bounced and they are more than 10% of what was sent, and for 3 days
+after a spam complaint; the user is told by email and in the feed.
+Scheduled emails wait while sending is paused (`PUT /agent/profile`
+`{ "sending_paused": true }` pauses it by hand).
+
+Every 6 hours (and 10 seconds after start) the server checks the agent
+domain: verified in Resend with sending enabled, DKIM and SPF records
+verified (Resend signs with the domain and uses a return path on it, so both
+align with the From address for DMARC), a DMARC record on the domain or its
+organisational domain, an MX record for replies, open and click tracking
+off, and a webhook subscribed to the delivery events. The report is in
+`setup.mail_health` on the overview; while Resend reports that the domain
+cannot send, the queue holds every email. Run `go run ./cmd/mailcheck`
+for the same report from the command line, and `go run ./cmd/mailcheck
+-fix` to turn tracking off and subscribe the existing webhook to the
+delivery events.
 
 ### Statuses
 
@@ -935,8 +1024,8 @@ with the reason.
 |---|---|
 | `new` | Awaiting the user's decision |
 | `approved` | Approved; an application is queued |
-| `applying` | Application being prepared or waiting on the extension |
-| `applied` | Submitted |
+| `applying` | Application being prepared, scheduled, or waiting on the user |
+| `applied` | Emailed |
 | `failed` | Preparation or submission failed (retryable) |
 | `dismissed` | Dismissed by the user, or auto-dismissed (`dismiss_reason`: `user`, `low_score`, `dealbreaker`, `cancelled`) |
 | `expired` | Not reviewed within 21 days |
@@ -944,13 +1033,13 @@ with the reason.
 | Application `status` | Meaning |
 |---|---|
 | `queued` | Approved; will be prepared on the next run |
-| `preparing` | Tailoring / cover letter in progress |
-| `ready` | Waiting for the extension to claim it (`channel: browser`) |
-| `in_progress` | Claimed by the extension (lease: `AGENT_CLAIM_LEASE_MINUTES`) |
-| `needs_input` | Waiting on the user (`needs.reason`: `missing_answers`, `captcha`, `login_required`, `verification`, `unsupported_form`, `review`) |
-| `submitted` | Done |
-| `failed` | See `last_error`; `POST .../retry` re-queues it |
-| `cancelled` | Cancelled by the user |
+| `preparing` | Tailoring / finding the address / writing the email |
+| `scheduled` | Its email waits in the send queue until `scheduled_at` |
+| `needs_input` | Waiting on the user: `needs.reason` `no_email` (no address found). Older rows may carry the extension's reasons (`missing_answers`, `captcha`, ...) |
+| `submitted` | Emailed; `delivery_status` follows what Resend reports |
+| `failed` | See `last_error` (including emails that bounced); `POST .../retry` re-queues it |
+| `cancelled` | Cancelled by the user (a scheduled email is taken out of the queue) |
+| `ready`, `in_progress` | Extension applications from before applying became email-only (migration 013 re-queued them) |
 
 ### Mailbox setup (Resend Inbound)
 
@@ -958,20 +1047,28 @@ with the reason.
    `AGENT_MAIL_DOMAIN=agent.example.com`. Use a subdomain: once its MX points
    at Resend, Resend receives **all** mail for that domain.
 2. In Resend, add the domain for receiving and create the MX record it shows.
-   Verify the same domain for sending (SPF/DKIM) so email applications can be
-   sent from it.
-3. Add a webhook for `email.received` pointing at
-   `https://<api-host>/api/v1/webhooks/resend` and set its signing secret as
-   `RESEND_WEBHOOK_SECRET`.
-4. If the agent domain lives in a different Resend account than the one
+   Verify the same domain for sending (the DKIM record and the SPF/MX records
+   of its `send.` return-path subdomain) so applications can be sent from it,
+   and turn open and click tracking off.
+3. Publish a DMARC record: `_dmarc.<domain>` or `_dmarc.<parent domain>`
+   with at least `v=DMARC1; p=none;` (Gmail, Yahoo and Outlook expect one).
+4. Add a webhook pointing at `https://<api-host>/api/v1/webhooks/resend`
+   subscribed to `email.received`, `email.delivered`,
+   `email.delivery_delayed`, `email.bounced`, `email.complained`,
+   `email.failed` and `email.suppressed`, and set its signing secret as
+   `RESEND_WEBHOOK_SECRET` (`go run ./cmd/mailcheck -fix` adds missing
+   events to an existing webhook).
+5. If the agent domain lives in a different Resend account than the one
    behind `RESEND_API_KEY`, create a **Full access** key in that account and
    set it as `AGENT_RESEND_API_KEY` (a sending-only key cannot read received
-   mail). Platform mail (OTPs, digests, alerts) keeps using `RESEND_API_KEY`.
+   mail or check the domain). Platform mail (OTPs, digests, alerts) keeps
+   using `RESEND_API_KEY`.
 
-Each user gets `<first>.<last>@AGENT_MAIL_DOMAIN` (editable). That address is
-what the agent puts on applications, so replies come back to the agent.
-Without `AGENT_MAIL_DOMAIN` the agent uses the account email and inbound
-features are disabled.
+Each user gets `<first>.<last>@AGENT_MAIL_DOMAIN` (editable). Applications
+are sent from that address, so replies come back to the agent. Without
+`AGENT_MAIL_DOMAIN` applications go only to addresses postings give, from
+`EMAIL_FROM_ADDRESS` with replies to the account email, and inbound features
+are disabled.
 
 All endpoints below require `Authorization: Bearer <access_token>` and use the
 standard envelope. List endpoints return `{ "items": [...], "pagination":
@@ -989,11 +1086,20 @@ latest processed resume) on first call.
     "setup": {
       "ai_provider": "anthropic", "has_ai_key": true, "web_search_available": true,
       "has_resume": true, "has_preferences": true, "mailbox_enabled": true,
-      "inbound_enabled": true, "extension_connected": false
+      "inbound_enabled": true, "extension_connected": false,
+      "mail_health": {
+        "domain": "agent.example.com", "status": "ok", "can_send": true, "checked_at": "...",
+        "checks": [ { "id": "dmarc", "label": "DMARC policy", "status": "ok", "detail": "Published at _dmarc.example.com (p=none: monitoring)..." } ]
+      }
+    },
+    "sending": {
+      "paused": false, "paused_until": null, "pause_reason": null, "paused_by_user": false,
+      "scheduled": 3, "next_send_at": "...", "sent_last_24h": 4,
+      "daily_cap": 8, "warming_up": true, "timezone": "Africa/Lagos"
     },
     "counts": {
       "leads": { "new": 29, "dismissed": 11, "applied": 1 },
-      "applications": { "ready": 2, "submitted": 1 },
+      "applications": { "scheduled": 3, "submitted": 1 },
       "unread_important": 1,
       "submitted_today": 1
     },
@@ -1003,6 +1109,13 @@ latest processed resume) on first call.
   }
 }
 ```
+
+`setup.mail_health` is `null` until the first deliverability check (or
+without `AGENT_MAIL_DOMAIN`); check `id`s: `domain`, `sending`, `tracking`,
+`dkim`, `spf`, `dmarc`, `mx`, `webhook`; statuses `ok`, `warn`, `fail`,
+`unknown`. `sending.daily_cap` is the mailbox's cap today (lower while it
+warms up); `paused_until` is `null` when the user paused sending
+(`paused_by_user`), since that pause lasts until they resume.
 
 ### GET /agent/profile · PUT /agent/profile
 
@@ -1035,7 +1148,9 @@ latest processed resume) on first call.
   "apply_settings": {
     "auto_submit": true, "daily_limit": 15, "auto_approve_score": null,
     "cover_letters": true, "digest_emails": true, "important_alerts": true,
-    "cold_email_fallback": true
+    "cold_email_fallback": true,
+    "send_delay_minutes": 30, "send_window_start": 8, "send_window_end": 18,
+    "send_weekdays_only": true, "send_timezone": "Africa/Lagos"
   },
   "run_interval_hours": 24,
   "next_run_at": null,
@@ -1045,10 +1160,14 @@ latest processed resume) on first call.
 ```
 
 `PUT` accepts any subset of: `enabled`, `resume_id`, `mailbox_local_part`,
-`search_prefs`, `application_profile`, `apply_settings`, `run_interval_hours`.
+`search_prefs`, `application_profile`, `apply_settings`, `run_interval_hours`,
+`sending_paused` (`true` holds every scheduled email until it is set back to
+`false`, which also lifts an automatic pause).
 `search_prefs` and `application_profile` are replaced as a whole;
 `apply_settings` is merged into the current settings, so keys it omits keep
 their values. Empty EEO answers mean "decline to self-identify".
+`cover_letters` switches the AI-written application email (off: a short
+template). `auto_submit` only mattered to the extension and is ignored.
 
 | Rule | Error |
 |---|---|
@@ -1056,6 +1175,7 @@ their values. Empty EEO answers mean "decline to self-identify".
 | Enabling needs at least one title or keyword | `400 INVALID_INPUT` |
 | `mailbox_local_part`: 1-40 of `a-z 0-9 . _ -` | `400 INVALID_INPUT`, `409 MAILBOX_TAKEN`, `422 MAILBOX_DISABLED` |
 | `daily_limit` 1-100, `auto_approve_score` 50-100 or null, `run_interval_hours` 1-168, `min_score` 0-100, `max_age_days` 0-365 | `400 INVALID_INPUT` |
+| `send_delay_minutes` 5-1440; `send_window_start` 0-23, `send_window_end` 1-24, at least 2 hours apart; `send_timezone` an IANA name or empty | `400 INVALID_INPUT` |
 | `watchlist[].ats` must be `greenhouse`, `lever` or `ashby`; `slug` `[A-Za-z0-9._-]` | `400 INVALID_INPUT` |
 
 Enabling sets `next_run_at` to now, so the first scheduled run starts within
@@ -1082,12 +1202,16 @@ Starts a run now. **AI gate**; rate limit 12/hour. Returns `202` with the run.
   "stats": {
     "sources_queried": 8, "source_errors": { "remotive": "HTTP 503" },
     "postings_fetched": 598, "new_leads": 29, "scored": 40, "strong_matches": 9,
-    "auto_approved": 0, "prepared": 3, "emails_sent": 1, "ready_for_browser": 2,
-    "failed": 0, "messages_triaged": 0
+    "auto_approved": 0, "prepared": 3, "emails_scheduled": 3, "emails_sent": 0,
+    "ready_for_browser": 0, "failed": 0, "messages_triaged": 0
   },
   "error": null, "started_at": "...", "finished_at": "..."
 }
 ```
+
+`emails_scheduled` counts applications put in the send queue. Emails are
+sent later by the queue, so `emails_sent` and `ready_for_browser` only appear
+on runs from before applying became email-only.
 
 ### GET /agent/events?before=&limit=
 
@@ -1100,8 +1224,10 @@ Activity feed, newest first (`before` = an event `id` for paging).
 
 Kinds: `run_started`, `run_finished`, `run_failed`, `leads_found`,
 `source_error`, `lead_approved`, `application_prepared`,
+`application_scheduled` (`data`: `{ "scheduled_at", "to" }`),
 `application_emailed`, `application_submitted`, `application_needs_input`,
-`application_failed`, `mail_received`, `status_changed`, `digest_sent`.
+`application_failed`, `email_bounced`, `email_complained`, `sending_paused`,
+`mail_received`, `status_changed`, `digest_sent`.
 
 ### GET /agent/leads
 
@@ -1116,16 +1242,18 @@ Query: `status` (comma-separated), `min_score`, `source`, `remote`
   "employment_type": "full_time",
   "salary": { "min": null, "max": null, "currency": null, "text": "$266K - $445K" },
   "url": "https://jobs.ashbyhq.com/openai/...", "apply_url": "https://jobs.ashbyhq.com/openai/.../application",
-  "apply_channel": "browser", "ats": "ashby", "auto_apply_supported": true,
+  "apply_email": null, "apply_channel": "email", "ats": "ashby", "auto_apply_supported": true,
   "posted_at": "...",
   "match": { "score": 92, "fit": "strong", "summary": "You ...", "pros": ["..."], "gaps": ["..."], "dealbreaker": null },
   "status": "new", "dismiss_reason": null, "decided_at": null, "job_id": null, "created_at": "..."
 }
 ```
 
-`match` is `null` until the lead is scored. `apply_channel` is `email` when
-the posting asks for applications by email. `auto_apply_supported` is true
-for email and for Greenhouse/Lever/Ashby forms.
+`match` is `null` until the lead is scored. Every lead is applied to by
+email: `apply_email` is the address the posting gives (null when the agent
+will look one up when it prepares the application). `apply_channel` is
+always `email` and `auto_apply_supported` always `true`; both are kept for
+older clients.
 
 ### GET /agent/leads/:id
 
@@ -1138,10 +1266,12 @@ for email and for Greenhouse/Lever/Ashby forms.
 ```
 
 `approve` queues an application for the next run; `dismiss` hides the lead
-(and cancels a queued application); `reset` brings a dismissed/expired lead
-back, and also undoes an approval whose application has not started yet (the
-queued application is removed; `400` once the agent has started it). Returns `{ "lead", "application" }`. `400 INVALID_INPUT` when the
-application is already being submitted.
+(and cancels a queued application, taking a scheduled email out of the send
+queue); `reset` brings a dismissed/expired lead back, and also undoes an
+approval whose application is only queued or scheduled (the application is
+removed; `400` while the agent is preparing it or waiting on the user).
+Returns `{ "lead", "application" }`. `400 INVALID_INPUT` when the
+application is already being sent.
 
 ### POST /agent/leads/decisions
 
@@ -1165,21 +1295,26 @@ company + title is returned instead of a duplicate.
 
 ```json
 {
-  "id": "uuid", "lead_id": "uuid", "job_id": "uuid", "channel": "browser", "status": "ready",
-  "apply_url": "https://job-boards.greenhouse.io/embed/job_app?for=reddit&token=1", "apply_email": null,
+  "id": "uuid", "lead_id": "uuid", "job_id": "uuid", "channel": "email", "status": "scheduled",
+  "apply_url": "https://job-boards.greenhouse.io/reddit/jobs/1", "apply_email": "careers@reddit.com",
   "ats": "greenhouse", "has_cover_letter": true, "use_original_resume": false, "attempts": 0,
-  "last_error": null,
-  "needs": { "reason": "missing_answers", "message": "...", "questions": [ { "field_id": "q1", "label": "...", "type": "text", "options": [] } ], "page_url": "..." },
-  "result": { "filled": 7, "final_url": "...", "message": "..." },
+  "last_error": null, "needs": null, "result": null,
+  "recipient_kind": "hiring", "recipient_source": "https://www.redditinc.com/careers",
+  "scheduled_at": "2026-11-16T09:14:00Z", "delivery_status": null, "delivery_detail": null,
   "claim_expires_at": null, "submitted_at": null, "created_at": "...", "updated_at": "...",
   "lead": { "title": "...", "company": "...", "score": 88, "url": "..." }
 }
 ```
 
-`channel` is `browser` (the extension submits it), `email` (sent to the
-posting's application address) or `cold_email` (the posting could not be
-read; see "Cold email fallback"). For cold emails `cover_letter` holds the
-email body and `result` describes it:
+`channel` is `email` (an application to `apply_email`) or `cold_email` (the
+posting could not be read; see "Cold email fallback"); `browser` only
+appears on applications from before applying became email-only.
+`cover_letter` (on `GET /agent/applications/:id`) is the email body.
+`scheduled_at` is set while the email waits (`scheduled`).
+`delivery_status` is what Resend reported after sending: `delivered`,
+`delayed`, `bounced`, `complained`, `failed` or `suppressed`
+(`delivery_detail` has the provider's message). For cold emails `result`
+describes the email:
 
 ```json
 { "kind": "cold_email", "to": "careers@acme.io", "contact_kind": "hiring",
@@ -1189,10 +1324,27 @@ email body and `result` describes it:
 
 `GET /agent/applications/:id` adds `cover_letter`.
 
+### POST /agent/applications/:id/recipient
+
+Sends the application to an address the user chose: the agent found none
+(`needs.reason: "no_email"`), the one it used bounced, or the user knows the
+recruiter.
+
+```json
+{ "email": "recruiter@acme.io" }
+```
+
+The address is checked like any other (valid, MX records, not a no-reply or
+agent address, not suppressed: `400 INVALID_INPUT` with the reason). Allowed
+for `needs_input`, `failed`, `cancelled`, `queued` and `scheduled`
+applications (a scheduled email is taken out of the queue). The application
+returns to `queued` with `recipient_kind: "user"`; the next run prepares and
+schedules it, reusing the tailored resume and the email.
+
 ### POST /agent/applications/:id/answers
 
-Answers the questions of a `needs_input` application; they are saved for
-every future form and the application returns to `ready`.
+Answers the questions of an older `needs_input` application (saved for
+later); the application returns to `queued`.
 
 ```json
 { "answers": [ { "question": "Do you hold an active TS/SCI clearance?", "answer": "No" } ] }
@@ -1201,12 +1353,18 @@ every future form and the application returns to `ready`.
 ### POST /agent/applications/:id/retry · POST /agent/applications/:id/cancel
 
 Retry re-queues a `failed`, `needs_input` or `cancelled` application and
-resets `attempts`. Cancel stops any application that is not `submitted`
-(the lead becomes `dismissed`).
+resets `attempts`; the next run prepares and schedules it again. Cancel
+stops any application that is not `submitted` (the lead becomes
+`dismissed`); a scheduled email is taken out of the queue (`400` while it is
+being sent). Cancelling one role of a cold email that covers several sends
+the others back to the queue to be written a new email.
 
 ### Extension protocol
 
-The extension works the queue of `ready` browser applications:
+Applying is email-only, so no new application becomes `ready` for the
+extension and `claim` returns `data: null`. The endpoints remain for
+extensions that predate the change (and `result` with `status: "submitted"`
+still records an application the user finished by hand). The protocol was:
 
 1. **`POST /agent/applications/claim`** — leases the next `ready` application
    (`in_progress`, expires after `AGENT_CLAIM_LEASE_MINUTES`; an expired lease
@@ -1324,11 +1482,19 @@ punctuation-insensitively).
 
 ### POST /webhooks/resend
 
-Public. Resend `email.received` webhook, verified with the Svix signature
-headers (`svix-id`, `svix-timestamp`, `svix-signature`) against
-`RESEND_WEBHOOK_SECRET` with a 5-minute replay window. Mail for addresses on
-`AGENT_MAIL_DOMAIN` is fetched from Resend's receiving API, stored per
-recipient (idempotent per Resend email id) and triaged in the background.
+Public. Resend webhook, verified with the Svix signature headers
+(`svix-id`, `svix-timestamp`, `svix-signature`) against
+`RESEND_WEBHOOK_SECRET` with a 5-minute replay window.
+
+- `email.received`: mail for addresses on `AGENT_MAIL_DOMAIN` is fetched
+  from Resend's receiving API, stored per recipient (idempotent per Resend
+  email id) and triaged in the background.
+- `email.delivered`, `email.delivery_delayed`, `email.bounced`,
+  `email.complained`, `email.failed`, `email.suppressed`: matched to the
+  sent email by `data.email_id` and recorded (see "Sending":
+  suppression, failed applications, automatic pauses). A later event only
+  replaces a less severe one, so retries and out-of-order deliveries are
+  harmless. Events for other emails are ignored.
 
 | Status | Meaning |
 |---|---|

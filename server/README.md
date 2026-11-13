@@ -4,7 +4,7 @@ Go REST API backend for the [Aethlara](../README.md) platform.
 
 ## Overview
 
-The Aethlara server is a Go 1.25+ REST API built on Chi. It follows a domain-based module architecture — each business domain (`auth`, `user`, `resume`, `job`, `chat`, `settings`, `analytics`, `agent`) owns its own `handler`, `service`, `repository`, and `routes`. PostgreSQL is accessed via `pgx`. Files live on Cloudflare R2 (S3-compatible). All AI calls go through `internal/ai`, which resolves the user's own Anthropic or OpenRouter key per call. The `agent` module runs the autopilot: a scheduler, job discovery, application pipeline, extension queue and inbox triage, all in-process.
+The Aethlara server is a Go 1.25+ REST API built on Chi. It follows a domain-based module architecture — each business domain (`auth`, `user`, `resume`, `job`, `chat`, `settings`, `analytics`, `agent`) owns its own `handler`, `service`, `repository`, and `routes`. PostgreSQL is accessed via `pgx`. Files live on Cloudflare R2 (S3-compatible). All AI calls go through `internal/ai`, which resolves the user's own Anthropic or OpenRouter key per call. The `agent` module runs the autopilot: a scheduler, job discovery, the email application pipeline, a paced send queue with delivery tracking, and inbox triage, all in-process.
 
 ## Tech Stack
 
@@ -29,6 +29,8 @@ The Aethlara server is a Go 1.25+ REST API built on Chi. It follows a domain-bas
 server/
 ├── cmd/api/
 │   └── main.go                      # Application entrypoint — loads config, wires modules, starts HTTP server
+├── cmd/mailcheck/
+│   └── main.go                      # Deliverability check for the agent mail domain (-fix: tracking off, webhook events)
 ├── internal/
 │   ├── auth/                        # Passwordless OTP auth (signup, login, verify, refresh, logout, logout-all)
 │   ├── user/                        # User profile (/user/me)
@@ -37,17 +39,17 @@ server/
 │   ├── analytics/                   # Dashboard aggregations (match score, monthly trend, status breakdown)
 │   ├── chat/                        # Per-job AI chat
 │   ├── settings/                    # AI provider + per-provider API keys, profile update, email change flow
-│   ├── agent/                       # Autopilot: profile, discovery + scoring, applications, extension protocol, inbox, scheduler
+│   ├── agent/                       # Autopilot: profile, discovery + scoring, email applications, send queue, delivery events, inbox, scheduler
 │   │   └── sources/                 # Job-board clients (Greenhouse, Lever, Ashby, Remotive, Remote OK, Himalayas, Jobicy, Arbeitnow)
 │   ├── apikey/                      # AES-256-GCM encryption service for user AI keys
 │   ├── ai/                          # The only AI call site: client.go (dispatch), anthropic.go (SDK), openrouter.go
 │   ├── prompts/                     # Versioned AI system prompts (job extraction, resume alignment, ...)
-│   ├── email/                       # Resend service + email templates (OTP, notifications)
+│   ├── email/                       # Resend client, templates, HTML/lint for outgoing mail, deliverability checks
 │   ├── storage/
 │   │   └── r2.go                    # Cloudflare R2 client (upload, presigned URL, delete)
 │   ├── middleware/                  # auth, ratelimit, cors, security, logger, recover, requestid, ai_gate
 │   ├── database/                    # Postgres connection + migrations runner
-│   │   └── migrations/              # 001_init.sql ... 011_agent_message_sender_auth.sql
+│   │   └── migrations/              # 001_init.sql ... 013_email_outbox.sql
 │   └── config/
 │       └── config.go                # Typed env loader — fails fast on missing/invalid vars
 ├── pkg/
@@ -124,13 +126,17 @@ The canonical reference is [`.env.example`](./.env.example). Key variables:
 | `RESEND_BASE_URL` | Optional Resend API override (proxies, local mocks) | *(empty)* |
 | `EXTENSION_DEVICE_MAX_PER_USER` | Active long-lived extension devices per user | `5` |
 | `AGENT_MAIL_DOMAIN` | Agent mailbox domain (MX -> Resend Inbound); empty disables mailboxes | `agent.example.com` |
-| `RESEND_WEBHOOK_SECRET` | Signing secret of the Resend `email.received` webhook | `whsec_...` |
+| `RESEND_WEBHOOK_SECRET` | Signing secret of the Resend webhook (`email.received` plus the delivery events, see docs.md) | `whsec_...` |
 | `AGENT_RESEND_API_KEY` | Full-access Resend key for the account that owns `AGENT_MAIL_DOMAIN`, if different from `RESEND_API_KEY`'s | `re_...` |
 | `AGENT_SCHEDULER_ENABLED` / `AGENT_SCHEDULER_INTERVAL_SECONDS` | Autopilot scheduler on/off and tick | `true` / `60` |
 | `AGENT_MAX_CONCURRENT_RUNS` / `AGENT_RUN_TIMEOUT_MINUTES` | Run concurrency and hard timeout | `2` / `30` |
 | `AGENT_MAX_LEADS_SCORED_PER_RUN` | Cost cap on AI-scored postings per run | `40` |
 | `AGENT_SOURCE_CACHE_MINUTES` | Shared cache TTL for job-board responses | `180` |
-| `AGENT_CLAIM_LEASE_MINUTES` | Extension claim lease before an application is re-queued | `15` |
+| `AGENT_CLAIM_LEASE_MINUTES` | Extension claim lease (older extensions only: applying is email-only) | `15` |
+| `AGENT_MAIL_MAX_PER_HOUR` | Emails per hour across all agent mailboxes | `30` |
+| `AGENT_MAIL_MAX_PER_MAILBOX_PER_DAY` | Most emails one mailbox sends per day | `40` |
+| `AGENT_MAIL_MIN_GAP_MINUTES` / `AGENT_MAIL_MAX_GAP_MINUTES` | Random gap between two emails from one mailbox | `6` / `18` |
+| `AGENT_MAIL_SENDER_ENABLED` | Run the send queue worker (false on an instance that must not send) | `true` |
 
 > **Critical.** `API_KEY_ENCRYPTION_SECRET` must be exactly **32 bytes** (64 hex chars). Generate it with:
 >
@@ -166,6 +172,36 @@ go run cmd/api/main.go        # single run
 
 The `run.sh` helper script in this directory wraps the most common local commands.
 
+## Email applications and deliverability
+
+Every application is an email from the user's agent mailbox. Runs prepare
+and schedule them; a worker sends them later, one at a time, inside each
+user's sending window, with random gaps, per-recipient spacing and a daily
+cap that warms a new mailbox up from 5 emails a day. Resend reports
+deliveries, bounces and spam complaints back through the webhook: bad
+addresses are suppressed for every user and repeated bounces or a complaint
+pause the user's sending. Details: [`docs.md`](./docs.md) "Sending".
+
+Check the sending domain (Resend verification, DKIM, SPF return path,
+DMARC, MX for replies, tracking off, webhook events) with the agent key from
+`.env`:
+
+```bash
+go run ./cmd/mailcheck          # report; exit status 1 if a check fails
+go run ./cmd/mailcheck -fix     # turn tracking off, subscribe the webhook to delivery events
+```
+
+The server runs the same checks every 6 hours, shows them on the dashboard
+and holds the queue while Resend says the domain cannot send.
+
+The database tests run against a real Postgres when
+`AETHLARA_TEST_DATABASE_URL` points at a server (each run creates and drops
+its own database):
+
+```bash
+AETHLARA_TEST_DATABASE_URL=postgres://postgres@127.0.0.1:5432/postgres?sslmode=disable go test ./internal/agent/
+```
+
 ## Database Migrations
 
 Migrations live in [`internal/database/migrations/`](./internal/database/migrations) and run in filename order:
@@ -180,6 +216,8 @@ Migrations live in [`internal/database/migrations/`](./internal/database/migrati
 - `009_agent.sql` — agent profiles, runs, events, leads, applications, mailbox, saved answers
 - `010_extension_devices.sql` — rotating long-lived extension device tokens
 - `011_agent_message_sender_auth.sql` — SPF/DKIM/DMARC verdict on agent mail
+- `012_cold_email.sql` — `cold_email` application channel
+- `013_email_outbox.sql` — send queue, suppression list, sending pause, `scheduled` applications (re-queues extension work)
 
 The runner splits files on `;`, so migrations must not contain semicolons inside strings or function bodies.
 
@@ -205,7 +243,8 @@ All responses use a consistent envelope:
 
 - **Single AI call site.** All Anthropic and OpenRouter requests go through `internal/ai`. Keys are decrypted per call by the settings service and never persisted or logged; the Anthropic SDK client is built with `WithoutEnvironmentDefaults()` so it can never pick up a server-side credential.
 - **Untrusted content.** Scraped postings, inbound email and form labels are treated as data in every prompt; model output is validated (structured outputs, option matching, links/ids checked against what we sent) before it is acted on. Mail that fails SPF/DKIM/DMARC never moves the tracker.
-- **Webhooks** are verified with Svix signatures and a 5-minute replay window; ingestion is idempotent.
+- **Webhooks** are verified with Svix signatures and a 5-minute replay window; ingestion is idempotent, and delivery events only ever escalate an email's recorded outcome.
+- **Outgoing mail** is idempotent (Resend `Idempotency-Key` per queued email), goes only to addresses that pass syntax, MX and suppression checks, and never to an address that bounced or complained.
 - **Extension devices** use rotating tokens with reuse detection (a replayed old token revokes the device).
 - **AES-256-GCM** for user API keys. The encryption secret must be exactly 32 bytes. Ciphertexts include a random 12-byte nonce and a 16-byte auth tag.
 - **Soft delete by default.** All delete operations mark rows as deleted rather than removing them. The one exception is API keys — those are hard-deleted, because leaving an encrypted secret around after a user asked to remove it is the wrong default.
