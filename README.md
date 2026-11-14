@@ -51,7 +51,7 @@ Aethlara is an open-source job-hunting agent. Upload your resume and tell it wha
 2. **It scores.** Every posting is matched against your resume and preferences, with a one-line reason, strengths and gaps. Deal-breakers (location, authorization, seniority, salary) are filtered out before you ever see them.
 3. **You approve.** Triage the queue in seconds (keyboard shortcuts, bulk actions). Approval is the only manual step.
 4. **It applies by email.** Each approved job gets a tailored resume and a tailored email, sent from your agent's own mailbox to the address in the posting, or to the hiring address the company publishes (careers@, jobs@…), or to one you give it. Emails don't go out in a burst: they wait in a send queue and leave one at a time, minutes apart, during your sending hours, with a warm-up for new mailboxes and bounce/spam-complaint protection so they land in the inbox.
-5. **It follows up.** Replies land in the agent's mailbox, get triaged by AI, and move your tracker automatically — confirmations, rejections, interview invites, assessments and offers. When no address can be found, or an email bounces, it asks you for one.
+5. **It follows up.** Replies land in the agent's mailbox, get triaged by AI, and move your tracker automatically — confirmations, rejections, interview invites, assessments and offers. Jobs with no address to email are dropped automatically; nothing waits on you.
 
 **The approach.** Aethlara is fully open source under MIT and runs on your own AI key — Anthropic (recommended; enables web search) or OpenRouter — encrypted with AES-256-GCM. No subscriptions, no lock-in, no training on your data. Self-hosting is a `docker compose up` away.
 
