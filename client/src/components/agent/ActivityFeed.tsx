@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import {
   Activity,
   ArrowRightLeft,
+  Ban,
   CheckCircle2,
   CircleHelp,
   Clock,
@@ -45,6 +46,7 @@ const KIND_ICON: Record<EventKind, LucideIcon> = {
   application_submitted: CheckCircle2,
   application_needs_input: CircleHelp,
   application_failed: XCircle,
+  application_dropped: Ban,
   mail_received: Mail,
   status_changed: ArrowRightLeft,
   digest_sent: MailCheck,

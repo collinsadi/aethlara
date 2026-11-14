@@ -82,8 +82,8 @@ function LastRunDetails({ run, now }: { run: AgentRun; now: number }) {
     { label: 'Scored', value: s.scored },
     { label: 'Prepared', value: s.prepared },
     { label: 'Emailed', value: s.emails_sent },
-    { label: 'For extension', value: s.ready_for_browser },
     { label: 'Failed', value: s.failed },
+    { label: 'Dropped (no email)', value: s.dropped ?? 0 },
   ]
   const sourceErrors = Object.entries(s.source_errors ?? {})
 

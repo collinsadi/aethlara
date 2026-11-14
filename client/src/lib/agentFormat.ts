@@ -42,6 +42,10 @@ export const DISMISS_REASON_META: Record<DismissReason | 'expired', { label: str
     help: 'The agent found something you said you would not accept.',
   },
   cancelled: { label: 'Application cancelled', help: 'You cancelled the application.' },
+  no_email: {
+    label: 'No email address',
+    help: 'Neither the posting nor the company publishes an address to apply to, so the agent dropped it.',
+  },
   expired: { label: 'Not reviewed in 21 days', help: 'Left unreviewed for 21 days.' },
 }
 
@@ -354,6 +358,7 @@ export function summarizeRunStats(stats: {
   emails_sent: number
   ready_for_browser: number
   failed: number
+  dropped?: number
   auto_approved: number
 }): string {
   const parts: string[] = []
@@ -363,5 +368,6 @@ export function summarizeRunStats(stats: {
   if (stats.emails_sent > 0) parts.push(`${pluralize(stats.emails_sent, 'application')} emailed`)
   if (stats.ready_for_browser > 0) parts.push(`${stats.ready_for_browser} ready for the extension`)
   if (stats.failed > 0) parts.push(`${stats.failed} failed`)
+  if (stats.dropped) parts.push(`${stats.dropped} dropped (no email address)`)
   return parts.length ? parts.join(' · ') : 'Nothing new this time'
 }

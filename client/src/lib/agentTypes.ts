@@ -17,7 +17,8 @@ export type LeadStatus =
   | 'dismissed'
   | 'expired'
 
-export type DismissReason = 'user' | 'low_score' | 'dealbreaker' | 'cancelled'
+/** `no_email`: the agent dropped the job because there was no address to email. */
+export type DismissReason = 'user' | 'low_score' | 'dealbreaker' | 'cancelled' | 'no_email'
 
 /**
  * Every new application is an email. `cold_email`: the posting could not be
@@ -73,6 +74,7 @@ export type EventKind =
   | 'application_submitted'
   | 'application_needs_input'
   | 'application_failed'
+  | 'application_dropped'
   | 'mail_received'
   | 'status_changed'
   | 'digest_sent'
@@ -286,6 +288,8 @@ export interface RunStats {
   emails_sent: number
   ready_for_browser: number
   failed: number
+  /** Jobs dropped for having no address to email (absent on older runs). */
+  dropped?: number
   messages_triaged: number
 }
 

@@ -38,7 +38,7 @@ export function ApplyChannelInfo({ lead, coverLetters }: { lead: Lead; coverLett
           ) : (
             <>
               an address {lead.company || 'the company'} publishes for hiring (careers@, jobs@…). If it can't find one,
-              it asks you for an address
+              it drops the job
             </>
           )}
           . It goes out later, spaced from your other applications, inside your sending window.
