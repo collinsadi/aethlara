@@ -234,7 +234,7 @@ func knownAboutRole(l *Lead) string {
 
 func recipientKind(c *contactInfo) string {
 	switch c.Kind {
-	case RecipientHiring, RecipientUser:
+	case RecipientHiring, RecipientUser, RecipientPosting:
 		return "careers or recruiting inbox"
 	case "person":
 		return "a person at the company"

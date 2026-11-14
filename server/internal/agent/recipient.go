@@ -16,8 +16,8 @@ import (
 // Each address must look deliverable before it is used: valid, on a domain
 // that accepts mail, not a no-reply inbox, not an agent mailbox, and not on
 // the suppression list. Mail to addresses that bounce is what gets a
-// sending domain blocklisted, so the agent asks the user for an address
-// rather than guess one.
+// sending domain blocklisted, so the agent never guesses an address: a job
+// with no address to send to is dropped.
 
 // recipient is where an application email goes.
 type recipient struct {
@@ -26,8 +26,8 @@ type recipient struct {
 	Source string // the page the address was published on
 }
 
-// needsNoEmail is the Needs reason when no address was found.
-const needsNoEmail = "no_email"
+// dismissNoEmail is the lead's dismiss reason when no address was found.
+const dismissNoEmail = "no_email"
 
 // undeliverableLocals are inboxes that never read applications.
 var undeliverableLocals = map[string]bool{
@@ -122,22 +122,29 @@ func userContact(app *Application) *contactInfo {
 	return &contactInfo{Email: strings.ToLower(strings.TrimSpace(*app.ApplyEmail)), Kind: RecipientUser}
 }
 
-// needsRecipient parks an application until the user gives an address.
-func (s *Service) needsRecipient(ctx context.Context, run *Run, userID string, app *Application, lead *Lead, why string) error {
-	app.Status = AppNeedsInput
-	app.Needs = &Needs{Reason: needsNoEmail, Message: clipText(sentenceCase(why), 500)}
-	app.LastError = nil
+// dropNoEmail gives up on a job no email can be sent for: the posting gives
+// no usable address and the company publishes none. The application is
+// cancelled and the lead dismissed (reason no_email), so the job never
+// waits on the user.
+func (s *Service) dropNoEmail(ctx context.Context, run *Run, userID string, app *Application, lead *Lead, why string, stats *RunStats) error {
+	msg := clipText(sentenceCase(why), 500)
+	app.Status = AppCancelled
+	app.Needs = nil
+	app.LastError = &msg
 	app.OutboxID = nil
+	app.ClaimExpiresAt = nil
 	if err := s.repo.SaveApplication(ctx, app); err != nil {
 		return ErrInternal
 	}
-	_, _ = s.repo.SetLeadStatus(ctx, userID, lead.ID, LeadApplying, nil, false)
+	reason := dismissNoEmail
+	_, _ = s.repo.SetLeadStatus(ctx, userID, lead.ID, LeadDismissed, &reason, false)
+	stats.Dropped++
 	var runID *string
 	if run != nil {
 		runID = &run.ID
 	}
-	s.event(ctx, Event{UserID: userID, RunID: runID, Kind: EventNeedsInput, Level: "warning", LeadID: &lead.ID, ApplicationID: &app.ID,
-		Message: fmt.Sprintf("%s at %s needs you: %s", lead.Title, lead.Company, needsLabel(needsNoEmail))})
+	s.event(ctx, Event{UserID: userID, RunID: runID, Kind: EventAppDropped, Level: "warning", LeadID: &lead.ID, ApplicationID: &app.ID,
+		Message: fmt.Sprintf("Dropped %s at %s: no email address to apply to. %s", lead.Title, lead.Company, msg)})
 	return nil
 }
 

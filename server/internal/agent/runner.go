@@ -258,6 +258,9 @@ func runSummary(st RunStats) string {
 	if st.Failed > 0 {
 		parts = append(parts, fmt.Sprintf("%d failed", st.Failed))
 	}
+	if st.Dropped > 0 {
+		parts = append(parts, fmt.Sprintf("%d dropped (no email address to apply to)", st.Dropped))
+	}
 	if len(parts) == 0 {
 		return "Run finished - nothing new this time"
 	}

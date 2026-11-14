@@ -231,6 +231,8 @@ type RunStats struct {
 	EmailsSent      int `json:"emails_sent"`
 	ReadyForBrowser int `json:"ready_for_browser"`
 	Failed          int `json:"failed"`
+	// Dropped counts jobs given up because there was no address to email.
+	Dropped         int `json:"dropped"`
 	MessagesTriaged int `json:"messages_triaged"`
 }
 
@@ -262,6 +264,7 @@ const (
 	EventSubmitted     = "application_submitted"
 	EventNeedsInput    = "application_needs_input"
 	EventAppFailed     = "application_failed"
+	EventAppDropped    = "application_dropped"
 	EventMailReceived  = "mail_received"
 	EventStatusChanged = "status_changed"
 	EventDigestSent    = "digest_sent"
@@ -371,7 +374,7 @@ type OutboxEmail struct {
 
 // Needs explains why an application is waiting on the user.
 type Needs struct {
-	Reason    string     `json:"reason"` // no_email|missing_answers|captcha|login_required|unsupported_form|review
+	Reason    string     `json:"reason"` // missing_answers|captcha|login_required|unsupported_form|review (no_email before jobs without an address were dropped)
 	Message   string     `json:"message"`
 	Questions []Question `json:"questions,omitempty"`
 	PageURL   string     `json:"page_url,omitempty"`

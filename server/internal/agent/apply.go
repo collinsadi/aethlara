@@ -136,16 +136,25 @@ func idPtr(a *Application) *string {
 
 // ── Prepare + schedule (run stage) ────────────────────────────────────────────
 
-// applyQueued prepares approved applications: tailor the resume, find the
-// address to send to, write the email, then schedule it in the send queue
-// (outbox.go sends it later, paced by schedule.go). Prepares no more than
+// applyQueued prepares approved applications: find the address to send to
+// (a job with none is dropped), tailor the resume, write the email, then
+// schedule it in the send queue
+// (outbox.go sends it later, paced by schedule.go). Schedules no more than
 // the mailbox's daily cap, counting what was sent in the last 24 hours and
-// what is already scheduled.
+// what is already scheduled. Jobs dropped for having no address don't use
+// the cap, so the pass keeps going until the cap is reached, the queue is
+// empty, or the pass has used half the run's time (discovery needs the rest).
 func (s *Service) applyQueued(ctx context.Context, run *Run, p *Profile, resume *ResumeInfo, stats *RunStats) error {
 	if n, err := s.repo.RequeueInterrupted(ctx, p.UserID); err == nil && n > 0 {
 		slog.Info("agent: re-queued interrupted applications", "count", n)
 	}
+	if s.agentMail == nil || p.MailboxAddress == nil || *p.MailboxAddress == "" {
+		// Nothing can be sent without a mailbox; leave the queue for later
+		// rather than dropping jobs whose address was never looked up.
+		return nil
+	}
 	now := time.Now()
+	deadline := now.Add(s.runTimeout() / 2)
 	limit, _ := s.dailySendCap(ctx, p, now)
 	used, err := s.repo.CountSubmittedSince(ctx, p.UserID, now.Add(-24*time.Hour))
 	if err != nil {
@@ -161,7 +170,7 @@ func (s *Service) applyQueued(ctx context.Context, run *Run, p *Profile, resume 
 		return nil
 	}
 
-	queued, err := s.repo.ApplicationsByStatus(ctx, p.UserID, AppQueued, budget)
+	queued, err := s.repo.ApplicationsByStatus(ctx, p.UserID, AppQueued, maxPreparePerPass)
 	if err != nil || len(queued) == 0 {
 		return err
 	}
@@ -177,8 +186,11 @@ func (s *Service) applyQueued(ctx context.Context, run *Run, p *Profile, resume 
 	// scheduled after the loop so several roles at one company share one
 	// email.
 	var cold []coldEmailJob
+	start := stats.EmailsScheduled
 	for i := range queued {
-		if ctx.Err() != nil {
+		// Cold emails are counted before grouping (one per application), so
+		// the pass never schedules more than the budget.
+		if ctx.Err() != nil || time.Now().After(deadline) || stats.EmailsScheduled-start+len(cold) >= budget {
 			break
 		}
 		if err := s.prepareOne(ctx, run, p, user, resume, &queued[i], plan, stats, &cold); errors.Is(err, ai.ErrNoAPIKey) {
@@ -201,6 +213,9 @@ func (s *Service) applyQueued(ctx context.Context, run *Run, p *Profile, resume 
 // maxPrepareAttempts bounds retries of transient failures (AI timeouts,
 // rate limits, provider errors, malformed AI output) across runs.
 const maxPrepareAttempts = 3
+
+// maxPreparePerPass bounds how many queued applications one pass looks at.
+const maxPreparePerPass = 30
 
 // transientPrepareError reports failures worth retrying on the next run.
 func transientPrepareError(err error) bool {
@@ -247,19 +262,23 @@ func (s *Service) prepareOne(ctx context.Context, run *Run, p *Profile, user *Us
 		return nil
 	}
 	var clues *siteClues
+	var rcpt *recipient
 	// coldEmail hands an application whose posting cannot be read to the
-	// cold email fallback: an address the user gave, or one the company
-	// publishes. With neither, the user is asked for an address.
+	// cold email fallback: an address the user gave, the one already found,
+	// or one the company publishes. With none, the job is dropped.
 	coldEmail := func(msg string, cause error) error {
 		if !p.ApplySettings.ColdEmailFallback || s.agentMail == nil || p.MailboxAddress == nil || *p.MailboxAddress == "" {
 			return fail(msg, cause)
 		}
 		contact := userContact(app)
+		if contact == nil && rcpt != nil {
+			contact = &contactInfo{Email: rcpt.Email, Kind: rcpt.Kind, Source: rcpt.Source}
+		}
 		if contact == nil {
 			contact = s.findContact(ctx, p.UserID, lead, clues)
 		}
 		if contact == nil {
-			return s.needsRecipient(ctx, run, p.UserID, app, lead, msg+", and "+lead.Company+" publishes no email address the agent could find")
+			return s.dropNoEmail(ctx, run, p.UserID, app, lead, msg+", and "+lead.Company+" publishes no email address the agent could find", stats)
 		}
 		log.Info("posting unreadable, cold email queued", "contact_kind", contact.Kind)
 		*cold = append(*cold, coldEmailJob{app: app, lead: lead, contact: contact, reason: msg})
@@ -286,7 +305,15 @@ func (s *Service) prepareOne(ctx context.Context, run *Run, p *Profile, user *Us
 		}
 	}
 
-	// 2. Tailor (reuse the job if an earlier attempt already created it).
+	// 2. Where to send it, found before any AI is spent on tailoring: a job
+	// with no address to email is dropped.
+	rcpt, why := s.resolveRecipient(ctx, p, lead, app, clues)
+	if rcpt == nil {
+		log.Info("no address to send the application to, dropped")
+		return s.dropNoEmail(ctx, run, p.UserID, app, lead, why, stats)
+	}
+
+	// 3. Tailor (reuse the job if an earlier attempt already created it).
 	var tailoredDoc *resumeDoc
 	var jobText string
 	if app.JobID != nil {
@@ -339,13 +366,6 @@ func (s *Service) prepareOne(ctx context.Context, run *Run, p *Profile, user *Us
 	}
 	if tailoredDoc == nil {
 		tailoredDoc = parseResume(resume.ExtractedJSON)
-	}
-
-	// 3. Where to send it.
-	rcpt, why := s.resolveRecipient(ctx, p, lead, app, clues)
-	if rcpt == nil {
-		log.Info("no address to send the application to")
-		return s.needsRecipient(ctx, run, p.UserID, app, lead, why)
 	}
 
 	// 4. The email.
@@ -1008,8 +1028,6 @@ func (s *Service) ReportResult(ctx context.Context, userID, appID string, r Resu
 
 func needsLabel(reason string) string {
 	switch reason {
-	case needsNoEmail:
-		return "an email address to send it to"
 	case "missing_answers":
 		return "a few questions only you can answer"
 	case "captcha":
