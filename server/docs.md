@@ -850,8 +850,11 @@ user's agent mailbox, with the tailored resume attached:
 
 - to the address the posting gives ("send your CV to ..."), or
 - to an address the company publishes for hiring (`careers@`, `jobs@`, ...),
-  found on its own site, or
-- to an address the user gives when the agent finds none.
+  found on its own site.
+
+A job with no address to email is **dropped**: the application is
+cancelled and the lead dismissed (`dismiss_reason: "no_email"`). The agent
+never guesses an address and never waits on the user for one.
 
 Prepared emails are not sent during the run. They wait in a **send queue**
 and go out one at a time, minutes apart, inside the user's sending window
@@ -870,12 +873,14 @@ The Chrome extension no longer applies: no new application is handed to it
 A run is triggered by the scheduler (every `run_interval_hours` while the
 profile is `enabled`) or manually (`POST /agent/runs`). Each run:
 
-1. **Prepares** approved leads (status `queued` applications), no more than
-   the mailbox's daily cap minus what was sent in the last 24 hours and what
-   is already scheduled: recover the full posting if needed (see below),
-   tailor the resume (same pipeline as `POST /jobs`, recorded with
-   `input_method: "agent"`), find the address, write the email, and
-   schedule it (`scheduled`).
+1. **Prepares** approved leads (status `queued` applications), scheduling
+   no more than the mailbox's daily cap minus what was sent in the last 24
+   hours and what is already scheduled: recover the full posting if needed
+   (see below), find the address (none: the job is dropped, without using
+   the cap), tailor the resume (same pipeline as `POST /jobs`, recorded with
+   `input_method: "agent"`), write the email, and schedule it (`scheduled`).
+   A pass looks at up to 30 queued applications and stops starting new ones
+   after half the run's time.
 2. **Discovers** new postings from every enabled source, drops what cannot
    fit (titles, excluded keywords/companies, remote/location, employment type,
    age for aggregators), removes duplicates, and scores up to
@@ -936,8 +941,8 @@ resume attached:
   days; later applications to it fail with an explanation.
 
 With the fallback off the application fails with the reason. When no
-address is found it waits for the user (`needs_input`, `needs.reason:
-"no_email"`; see `POST /agent/applications/:id/recipient`).
+address is found the job is dropped (application `cancelled`, lead
+`dismissed` with `dismiss_reason: "no_email"`).
 
 **Finding the address.** Every application needs one, best source first:
 the address the user gave for it, the posting's own (`apply_email`: a
@@ -1027,7 +1032,7 @@ delivery events.
 | `applying` | Application being prepared, scheduled, or waiting on the user |
 | `applied` | Emailed |
 | `failed` | Preparation or submission failed (retryable) |
-| `dismissed` | Dismissed by the user, or auto-dismissed (`dismiss_reason`: `user`, `low_score`, `dealbreaker`, `cancelled`) |
+| `dismissed` | Dismissed by the user, or auto-dismissed (`dismiss_reason`: `user`, `low_score`, `dealbreaker`, `cancelled`, `no_email` = no address to email, dropped by the agent) |
 | `expired` | Not reviewed within 21 days |
 
 | Application `status` | Meaning |
@@ -1035,7 +1040,7 @@ delivery events.
 | `queued` | Approved; will be prepared on the next run |
 | `preparing` | Tailoring / finding the address / writing the email |
 | `scheduled` | Its email waits in the send queue until `scheduled_at` |
-| `needs_input` | Waiting on the user: `needs.reason` `no_email` (no address found). Older rows may carry the extension's reasons (`missing_answers`, `captcha`, ...) |
+| `needs_input` | Only on older rows: the extension's reasons (`missing_answers`, `captcha`, ...). Jobs with no address are dropped rather than waiting |
 | `submitted` | Emailed; `delivery_status` follows what Resend reports |
 | `failed` | See `last_error` (including emails that bounced); `POST .../retry` re-queues it |
 | `cancelled` | Cancelled by the user (a scheduled email is taken out of the queue) |
@@ -1203,13 +1208,14 @@ Starts a run now. **AI gate**; rate limit 12/hour. Returns `202` with the run.
     "sources_queried": 8, "source_errors": { "remotive": "HTTP 503" },
     "postings_fetched": 598, "new_leads": 29, "scored": 40, "strong_matches": 9,
     "auto_approved": 0, "prepared": 3, "emails_scheduled": 3, "emails_sent": 0,
-    "ready_for_browser": 0, "failed": 0, "messages_triaged": 0
+    "ready_for_browser": 0, "failed": 0, "dropped": 2, "messages_triaged": 0
   },
   "error": null, "started_at": "...", "finished_at": "..."
 }
 ```
 
-`emails_scheduled` counts applications put in the send queue. Emails are
+`emails_scheduled` counts applications put in the send queue, `dropped`
+jobs given up for having no address to email. Emails are
 sent later by the queue, so `emails_sent` and `ready_for_browser` only appear
 on runs from before applying became email-only.
 
@@ -1226,7 +1232,7 @@ Kinds: `run_started`, `run_finished`, `run_failed`, `leads_found`,
 `source_error`, `lead_approved`, `application_prepared`,
 `application_scheduled` (`data`: `{ "scheduled_at", "to" }`),
 `application_emailed`, `application_submitted`, `application_needs_input`,
-`application_failed`, `email_bounced`, `email_complained`, `sending_paused`,
+`application_failed`, `application_dropped`, `email_bounced`, `email_complained`, `sending_paused`,
 `mail_received`, `status_changed`, `digest_sent`.
 
 ### GET /agent/leads
@@ -1326,9 +1332,9 @@ describes the email:
 
 ### POST /agent/applications/:id/recipient
 
-Sends the application to an address the user chose: the agent found none
-(`needs.reason: "no_email"`), the one it used bounced, or the user knows the
-recruiter.
+Sends the application to an address the user chose: the one the agent
+used bounced, or the user knows the recruiter (including for a job dropped
+for having no address).
 
 ```json
 { "email": "recruiter@acme.io" }
